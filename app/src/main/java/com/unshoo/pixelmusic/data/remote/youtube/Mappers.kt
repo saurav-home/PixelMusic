@@ -4,6 +4,22 @@ import com.unshoo.pixelmusic.data.model.Song
 import com.unshoo.pixelmusic.data.model.ArtistRef
 import unshoo.ianshulyadav.pixelmusic.innertube.models.SongItem
 
+fun upgradeThumbnailUrlToHighQuality(url: String?): String? {
+    if (url.isNullOrBlank()) return url
+    val resizeRegex = Regex("=w\\d+-h\\d+.*")
+    if (resizeRegex.containsMatchIn(url)) {
+        return url.replace(resizeRegex, "=w1000-h1000")
+    }
+    if (url.contains("googleusercontent.com")) {
+        return if (url.contains("=")) {
+            url.substringBeforeLast("=") + "=w1000-h1000"
+        } else {
+            "$url=w1000-h1000"
+        }
+    }
+    return url
+}
+
 fun SongItem.toNativeSong(): Song {
     val artistName = artists.joinToString { it.name }
     val artistIdHash = artists.firstOrNull()?.name?.hashCode()?.toLong() ?: 0L
@@ -26,7 +42,7 @@ fun SongItem.toNativeSong(): Song {
         albumArtist = artistName,
         path = "",
         contentUriString = "youtube://$id",
-        albumArtUriString = thumbnail,
+        albumArtUriString = upgradeThumbnailUrlToHighQuality(thumbnail),
         duration = (duration ?: 0) * 1000L,
         genre = "YouTube",
         lyrics = null,

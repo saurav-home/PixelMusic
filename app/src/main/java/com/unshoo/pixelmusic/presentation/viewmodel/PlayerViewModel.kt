@@ -3285,6 +3285,7 @@ class PlayerViewModel @Inject constructor(
             clearPreparingSongIfMatching()
             return
         }
+        com.unshoo.pixelmusic.data.remote.youtube.AutoQueueManager.reset()
         val effectiveStartSong = songsToPlay.firstOrNull { it.id == startSong.id } ?: songsToPlay.first()
 
         // Update dynamic shortcut for last played playlist
@@ -3401,6 +3402,7 @@ class PlayerViewModel @Inject constructor(
             } else {
                 playSongsAction()
             }
+            com.unshoo.pixelmusic.data.remote.youtube.AutoQueueManager.forceRefill(forceRefresh = true)
         }
     }
 

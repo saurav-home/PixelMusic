@@ -1956,10 +1956,55 @@ interface MusicDao {
             SELECT CAST(song_id AS INTEGER)
             FROM song_engagements
             WHERE play_count > 0
+        ) AND (
+            -- 1. The artist of the song has been played
+            artist_id IN (
+                SELECT artist_id
+                FROM songs
+                WHERE id IN (
+                    SELECT CAST(song_id AS INTEGER)
+                    FROM song_engagements
+                    WHERE play_count > 0
+                )
+            )
+            -- 2. The artist of the song is a favorite artist
+            OR artist_id IN (
+                SELECT artist_id
+                FROM songs
+                WHERE is_favorite = 1
+            )
+            -- 3. The song is related to a song by a played or favorite artist
+            OR id IN (
+                SELECT related_song_id
+                FROM related_song_map
+                WHERE song_id IN (
+                    SELECT id
+                    FROM songs
+                    WHERE artist_id IN (
+                        SELECT artist_id
+                        FROM songs
+                        WHERE id IN (
+                            SELECT CAST(song_id AS INTEGER)
+                            FROM song_engagements
+                            WHERE play_count > 0
+                        )
+                    ) OR is_favorite = 1
+                )
+            )
+            -- 4. The song is related to a recently played song
+            OR id IN (
+                SELECT related_song_id
+                FROM related_song_map
+                WHERE song_id IN (
+                    SELECT CAST(song_id AS INTEGER)
+                    FROM song_engagements
+                    WHERE play_count > 0
+                )
+            )
         )
         ORDER BY (
             CASE
-                -- Match related songs of recently played that also match favorite artists
+                -- Match related songs of recently played that also match favorite/played artists
                 WHEN id IN (
                     SELECT related_song_id
                     FROM related_song_map
@@ -1971,7 +2016,11 @@ interface MusicDao {
                 ) AND artist_id IN (
                     SELECT artist_id
                     FROM songs
-                    WHERE is_favorite = 1
+                    WHERE is_favorite = 1 OR id IN (
+                        SELECT CAST(song_id AS INTEGER)
+                        FROM song_engagements
+                        WHERE play_count > 0
+                    )
                 ) THEN 4
                 
                 -- Match related songs of recently played
@@ -1985,11 +2034,15 @@ interface MusicDao {
                     )
                 ) THEN 3
                 
-                -- Match favorite artist songs
+                -- Match played / favorite artist songs
                 WHEN artist_id IN (
                     SELECT artist_id
                     FROM songs
-                    WHERE is_favorite = 1
+                    WHERE is_favorite = 1 OR id IN (
+                        SELECT CAST(song_id AS INTEGER)
+                        FROM song_engagements
+                        WHERE play_count > 0
+                    )
                 ) THEN 2
                 
                 -- Fallback
@@ -1999,6 +2052,44 @@ interface MusicDao {
         LIMIT :limit
     """)
     fun quickPicks(limit: Int = 20): Flow<List<SongEntity>>
+
+    @Query("""
+        SELECT * FROM songs
+        WHERE id != :songId AND (
+            -- Same artist
+            artist_id = :artistId
+            -- Same album
+            OR album_id = :albumId
+            -- Same genre
+            OR (genre IS NOT NULL AND genre = :genre)
+            -- Related songs
+            OR id IN (
+                SELECT related_song_id
+                FROM related_song_map
+                WHERE song_id = :songId
+            )
+            -- Songs in the same playlist
+            OR CAST(id AS TEXT) IN (
+                SELECT song_id
+                FROM playlist_songs
+                WHERE playlist_id IN (
+                    SELECT playlist_id
+                    FROM playlist_songs
+                    WHERE song_id = CAST(:songId AS TEXT)
+                )
+            )
+        )
+        ORDER BY RANDOM()
+        LIMIT :limit
+    """)
+    suspend fun getLocalRelatedSongs(
+        songId: Long,
+        artistId: Long,
+        albumId: Long,
+        genre: String?,
+        limit: Int = 10
+    ): List<SongEntity>
+
 
     @Query("SELECT * FROM songs WHERE genre = :genre AND id != :excludeId ORDER BY RANDOM() LIMIT :limit")
     suspend fun getSongsByGenre(genre: String, excludeId: Long = 0, limit: Int = 10): List<SongEntity>

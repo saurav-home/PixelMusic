@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -387,9 +388,7 @@ fun HomeScreen(
                             song = yourMixSong,
                             isShuffleEnabled = isShuffleEnabled,
                             onPlayShuffled = {
-                                if (usesFallbackHomeMix) {
-                                    playerViewModel.shuffleAllSongs(queueName = "Your Mix")
-                                } else {
+                                if (yourMixSongs.isNotEmpty()) {
                                     playerViewModel.playSongsShuffled(
                                         songsToPlay = yourMixSongs,
                                         queueName = "Your Mix",
@@ -712,29 +711,31 @@ fun YourMixHeader(
     isShuffleEnabled: Boolean = false,
     onPlayShuffled: () -> Unit
 ) {
-    val buttonCorners = 68.dp
     val colors = MaterialTheme.colorScheme
-
     val titleStyle = rememberYourMixTitleStyle()
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(140.dp)
-            .padding(16.dp)
+            .wrapContentHeight()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         Column(
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(top = 12.dp, start = 12.dp)
+                .fillMaxWidth()
+                .padding(end = 96.dp)
+                .padding(start = 12.dp, top = 8.dp)
         ) {
             // Your Mix Title
             Text(
                 text = stringResource(R.string.home_your_mix_title),
                 style = titleStyle,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
+                maxLines = 2,
+                overflow = TextOverflow.Clip
             )
+
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Artist/Song subtitle
             Text(
@@ -744,24 +745,15 @@ fun YourMixHeader(
                 modifier = Modifier.padding(start = 8.dp)
             )
         }
-        // Play Button - color changes based on shuffle state
+        // Play Button - fully expressive CircleShape for maximum performance and touch response
         LargeExtendedFloatingActionButton(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
+                .align(Alignment.CenterEnd)
                 .padding(end = 12.dp),
             onClick = onPlayShuffled,
             containerColor = if (isShuffleEnabled) colors.primary else colors.tertiaryContainer,
             contentColor = if (isShuffleEnabled) colors.onPrimary else colors.onTertiaryContainer,
-            shape = AbsoluteSmoothCornerShape(
-                cornerRadiusTL = buttonCorners,
-                smoothnessAsPercentTR = 60,
-                cornerRadiusBR = buttonCorners,
-                smoothnessAsPercentTL = 60,
-                cornerRadiusBL = buttonCorners,
-                smoothnessAsPercentBR = 60,
-                cornerRadiusTR = buttonCorners,
-                smoothnessAsPercentBL = 60,
-            )
+            shape = androidx.compose.foundation.shape.CircleShape
         ) {
             Icon(
                 painter = painterResource(R.drawable.rounded_shuffle_24),

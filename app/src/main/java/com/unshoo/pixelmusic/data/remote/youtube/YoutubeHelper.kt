@@ -82,6 +82,22 @@ object YoutubeHelper {
             thumbnailElement.jsonObject["musicThumbnailRenderer"]?.jsonObject?.get("thumbnail")?.jsonObject?.get(
                 "thumbnails"
             )?.jsonArray?.last()?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull ?: ""
+        return upgradeThumbnailUrlToHighQuality(url)
+    }
+
+    private fun upgradeThumbnailUrlToHighQuality(url: String): String {
+        if (url.isBlank()) return url
+        val resizeRegex = Regex("=w\\d+-h\\d+.*")
+        if (resizeRegex.containsMatchIn(url)) {
+            return url.replace(resizeRegex, "=w1000-h1000")
+        }
+        if (url.contains("googleusercontent.com")) {
+            return if (url.contains("=")) {
+                url.substringBeforeLast("=") + "=w1000-h1000"
+            } else {
+                "$url=w1000-h1000"
+            }
+        }
         return url
     }
 
