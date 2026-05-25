@@ -166,6 +166,7 @@ import com.unshoo.pixelmusic.data.preferences.LaunchTab
 import com.unshoo.pixelmusic.data.preferences.LibraryNavigationMode
 import com.unshoo.pixelmusic.data.preferences.NavBarStyle
 import com.unshoo.pixelmusic.data.preferences.ThemePreference
+import com.unshoo.pixelmusic.data.preferences.PlayerStreamClient
 import com.unshoo.pixelmusic.data.model.Song
 import com.unshoo.pixelmusic.data.model.LyricsSourcePreference
 import com.unshoo.pixelmusic.presentation.components.CollapsibleCommonTopBar
@@ -954,6 +955,19 @@ fun SettingsCategoryScreen(
                                     checked = uiState.cacheLikedSongsOffline,
                                     onCheckedChange = { settingsViewModel.setCacheLikedSongsOffline(it) },
                                     leadingIcon = { Icon(painterResource(R.drawable.round_favorite_border_24), null, tint = MaterialTheme.colorScheme.secondary) }
+                                )
+                                ThemeSelectorItem(
+                                    label = "Playback Client",
+                                    description = "Select the client used to resolve remote streams. Android VR streams directly and provides maximum speed, while Web Client uses YouTube Music.",
+                                    options = mapOf(
+                                        PlayerStreamClient.ANDROID_VR.name to "Android VR (Default)",
+                                        PlayerStreamClient.WEB_REMIX.name to "Web Client"
+                                    ),
+                                    selectedKey = uiState.playerStreamClient.name,
+                                    onSelectionChanged = { key ->
+                                        settingsViewModel.onPlayerStreamClientChange(PlayerStreamClient.valueOf(key))
+                                    },
+                                    leadingIcon = { Icon(Icons.Outlined.PlayCircle, null, tint = MaterialTheme.colorScheme.secondary) }
                                 )
                             }
                         }

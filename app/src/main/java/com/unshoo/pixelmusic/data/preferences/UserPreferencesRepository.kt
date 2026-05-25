@@ -68,6 +68,12 @@ enum class AlbumArtQuality(val maxSize: Int, val label: String) {
     ORIGINAL(0, "Original - Maximum quality")
 }
 
+enum class PlayerStreamClient {
+    ANDROID_VR,
+    WEB_REMIX,
+}
+
+
 @Singleton
 class UserPreferencesRepository
 @Inject
@@ -249,6 +255,7 @@ constructor(
         val STORAGE_LIMIT_MB = intPreferencesKey("storage_limit_mb") // 0 = unlimited
         val FOLDER_ARTWORK_PREFERENCE = stringPreferencesKey("folder_artwork_preference")
         val SUBSCRIBED_ARTIST_IDS = stringSetPreferencesKey("subscribed_artist_ids")
+        val PLAYER_STREAM_CLIENT = stringPreferencesKey("player_stream_client")
     }
 
     val appRebrandDialogShownFlow: Flow<Boolean> =
@@ -896,6 +903,18 @@ constructor(
     suspend fun setStorageLimitMb(limitMb: Int) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.STORAGE_LIMIT_MB] = limitMb.coerceIn(0, 10240)
+        }
+    }
+
+    val playerStreamClientFlow: Flow<PlayerStreamClient> =
+        dataStore.data.map { preferences ->
+            val name = preferences[PreferencesKeys.PLAYER_STREAM_CLIENT] ?: PlayerStreamClient.ANDROID_VR.name
+            try { PlayerStreamClient.valueOf(name) } catch (_: Exception) { PlayerStreamClient.ANDROID_VR }
+        }
+
+    suspend fun setPlayerStreamClient(client: PlayerStreamClient) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.PLAYER_STREAM_CLIENT] = client.name
         }
     }
 

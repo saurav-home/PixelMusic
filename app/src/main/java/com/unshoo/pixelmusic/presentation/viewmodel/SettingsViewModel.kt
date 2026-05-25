@@ -17,6 +17,7 @@ import com.unshoo.pixelmusic.data.preferences.CarouselStyle
 import com.unshoo.pixelmusic.data.preferences.LibraryNavigationMode
 import com.unshoo.pixelmusic.data.preferences.ThemePreference
 import com.unshoo.pixelmusic.data.preferences.UserPreferencesRepository
+import com.unshoo.pixelmusic.data.preferences.PlayerStreamClient
 import com.unshoo.pixelmusic.data.database.AiUsageDao
 import com.unshoo.pixelmusic.data.database.AiUsageEntity
 import com.unshoo.pixelmusic.data.preferences.AiPreferencesRepository
@@ -118,7 +119,8 @@ data class SettingsUiState(
     val cacheLikedSongsOffline: Boolean = false,
     val storageLimitMb: Int = 2048,
     val preloadQueueEnabled: Boolean = true,
-    val preloadQueueSize: Int = 5
+    val preloadQueueSize: Int = 5,
+    val playerStreamClient: PlayerStreamClient = PlayerStreamClient.ANDROID_VR
 )
 
 data class FailedSongInfo(
@@ -740,6 +742,18 @@ class SettingsViewModel @Inject constructor(
             userPreferencesRepository.storageLimitMbFlow.collect { limit ->
                 _uiState.update { it.copy(storageLimitMb = limit) }
             }
+        }
+
+        viewModelScope.launch {
+            userPreferencesRepository.playerStreamClientFlow.collect { client ->
+                _uiState.update { it.copy(playerStreamClient = client) }
+            }
+        }
+    }
+
+    fun onPlayerStreamClientChange(client: PlayerStreamClient) {
+        viewModelScope.launch {
+            userPreferencesRepository.setPlayerStreamClient(client)
         }
     }
 

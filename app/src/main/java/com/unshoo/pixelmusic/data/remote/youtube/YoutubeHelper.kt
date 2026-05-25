@@ -34,6 +34,26 @@ import okhttp3.Request
 import org.schabi.newpipe.extractor.ServiceList
 import java.io.File
 import java.util.Locale
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.ANDROID_VR_NO_AUTH
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.ANDROID_VR_1_61_48
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.ANDROID_VR_1_43_32
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.WEB_REMIX
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.ANDROID_MUSIC
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.IOS
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.MOBILE
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.TVHTML5
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.TVHTML5_SIMPLY_EMBEDDED_PLAYER
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.WEB
+import unshoo.ianshulyadav.pixelmusic.innertube.models.YouTubeClient.Companion.WEB_CREATOR
+import unshoo.ianshulyadav.pixelmusic.innertube.utils.StreamClientUtils
+import unshoo.ianshulyadav.pixelmusic.innertube.YouTube
+import unshoo.ianshulyadav.pixelmusic.innertube.NewPipeUtils
+import unshoo.ianshulyadav.pixelmusic.innertube.PlaybackAuthState
+import unshoo.ianshulyadav.pixelmusic.innertube.models.response.PlayerResponse
+import com.unshoo.pixelmusic.data.preferences.PlayerStreamClient
+import java.util.concurrent.ConcurrentHashMap
+
 
 object YoutubeHelper {
     val client = OkHttpClient.Builder()
@@ -49,6 +69,10 @@ object YoutubeHelper {
 
     /** Register a locally-available file path for a YouTube video ID so playback is instant. */
     private val localFilePathCache = LruCache<String, String>(200)
+
+    private val failedStreamClientsUntil = ConcurrentHashMap<String, Long>()
+    private const val FAILED_CLIENT_BACKOFF_MS = 10 * 60 * 1000L
+    @Volatile private var lastSuccessfulClientKey: String? = null
 
     suspend fun extractGenre(videoId: String): String? = withContext(Dispatchers.IO) {
         try {
@@ -549,7 +573,7 @@ object YoutubeHelper {
             }
         }
 
-        val newUri = getSongUrlFromYoutube(song, lowQuality = false, maxBitrateKbps = maxBitrate)
+        val newUri = getSongUrlFromYoutube(context, song, lowQuality = false, maxBitrateKbps = maxBitrate)
         streamUrlLruCache.put(cacheKey, newUri)
         if (maxBitrate == 0 || maxBitrate >= 256) {
             streamUrlLruCache.put("${videoId}_high", newUri)
@@ -584,7 +608,7 @@ object YoutubeHelper {
         // If high-quality is already cached, use it immediately (better than re-resolving)
         streamUrlLruCache.get("${videoId}_high")?.let { return it }
 
-        val lowUrl = getSongUrlFromYoutube(song, lowQuality = true)
+        val lowUrl = getSongUrlFromYoutube(context, song, lowQuality = true)
         streamUrlLruCache.put("${videoId}_low", lowUrl)
         return lowUrl
     }
@@ -611,7 +635,7 @@ object YoutubeHelper {
         val cacheKey = if (maxBitrate > 0) "${videoId}_q$maxBitrate" else "${videoId}_high"
         streamUrlLruCache.get(cacheKey)?.let { return it }
 
-        val highUrl = getSongUrlFromYoutube(song, lowQuality = false, maxBitrateKbps = maxBitrate)
+        val highUrl = getSongUrlFromYoutube(context, song, lowQuality = false, maxBitrateKbps = maxBitrate)
         streamUrlLruCache.put(cacheKey, highUrl)
         if (maxBitrate == 0 || maxBitrate >= 256) {
             streamUrlLruCache.put("${videoId}_high", highUrl)
@@ -658,7 +682,7 @@ object YoutubeHelper {
         val cacheKey = if (maxBitrateKbps > 0) "${videoId}_q${maxBitrateKbps}" else "${videoId}_high"
         streamUrlLruCache.get(cacheKey)?.let { return it }
 
-        val url = getSongUrlFromYoutube(song, lowQuality = false, maxBitrateKbps = maxBitrateKbps)
+        val url = getSongUrlFromYoutube(context, song, lowQuality = false, maxBitrateKbps = maxBitrateKbps)
         streamUrlLruCache.put(cacheKey, url)
         return url
     }
@@ -720,6 +744,177 @@ object YoutubeHelper {
         return ""
     }
 
+    private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
+        IOS,
+        MOBILE,
+        ANDROID_MUSIC,
+        ANDROID_VR_NO_AUTH,
+        ANDROID_VR_1_61_48,
+        ANDROID_VR_1_43_32,
+        TVHTML5,
+        TVHTML5_SIMPLY_EMBEDDED_PLAYER,
+        WEB,
+        WEB_CREATOR,
+        WEB_REMIX
+    )
+
+    private fun isCipheredFormat(format: PlayerResponse.StreamingData.Format): Boolean {
+        return format.url == null && (format.signatureCipher != null || format.cipher != null)
+    }
+
+    private fun shouldSkipCipheredWebCandidate(
+        client: YouTubeClient,
+        format: PlayerResponse.StreamingData.Format,
+        authState: PlaybackAuthState,
+    ): Boolean {
+        val isWebClient = StreamClientUtils.isWebClient(client.clientName)
+        val isCiphered = isCipheredFormat(format)
+        val hasGvsPoToken = !authState.resolveGvsPoToken(client).isNullOrBlank()
+        if (authState.webClientPoTokenEnabled && isWebClient && isCiphered && !hasGvsPoToken) {
+            UmihiHelper.printd("Skipping ciphered ${client.clientName} stream candidate because Web PoToken playback is enabled but no GVS token is available")
+            return true
+        }
+        return false
+    }
+
+    private fun isStreamClientTemporarilyBlocked(
+        videoId: String,
+        clientKey: String?,
+        authFingerprint: String,
+    ): Boolean {
+        val normalizedClientKey = StreamClientUtils.normalizeClientKey(clientKey)
+        if (normalizedClientKey.isEmpty()) return false
+        val key = "$authFingerprint:$videoId:$normalizedClientKey"
+        val until = failedStreamClientsUntil[key] ?: return false
+        if (until <= System.currentTimeMillis()) {
+            failedStreamClientsUntil.remove(key)
+            return false
+        }
+        return true
+    }
+
+    private fun markStreamClientFailed(
+        videoId: String,
+        clientKey: String?,
+        httpStatusCode: Int,
+        authFingerprint: String
+    ) {
+        if (httpStatusCode !in setOf(403, 404, 410, 416)) return
+        val normalizedClientKey = StreamClientUtils.normalizeClientKey(clientKey)
+        if (normalizedClientKey.isEmpty()) return
+        val key = "$authFingerprint:$videoId:$normalizedClientKey"
+        failedStreamClientsUntil[key] = System.currentTimeMillis() + FAILED_CLIENT_BACKOFF_MS
+    }
+
+    private fun resolvePreferredPlaybackClient(
+        preferredStreamClient: PlayerStreamClient,
+        authState: PlaybackAuthState,
+    ): YouTubeClient {
+        val hasPlayerPoToken = !authState.resolvePlayerPoToken(WEB_REMIX).isNullOrBlank()
+        val hasGvsPoToken = !authState.resolveGvsPoToken(WEB_REMIX).isNullOrBlank()
+
+        if (preferredStreamClient == PlayerStreamClient.ANDROID_VR &&
+            authState.hasPlaybackLoginContext &&
+            authState.webClientPoTokenEnabled &&
+            hasPlayerPoToken &&
+            hasGvsPoToken
+        ) {
+            return WEB_REMIX
+        }
+
+        return when (preferredStreamClient) {
+            PlayerStreamClient.ANDROID_VR ->
+                if (authState.hasPlaybackLoginContext) ANDROID_MUSIC else ANDROID_VR_NO_AUTH
+            PlayerStreamClient.WEB_REMIX -> WEB_REMIX
+        }
+    }
+
+    private fun buildStreamClientOrder(
+        preferredStreamClient: PlayerStreamClient,
+        authState: PlaybackAuthState,
+    ): List<YouTubeClient> {
+        val preferredYouTubeClient = resolvePreferredPlaybackClient(preferredStreamClient, authState)
+        val lastSuccessfulClient = lastSuccessfulClientKey?.let { key ->
+            STREAM_FALLBACK_CLIENTS.find { StreamClientUtils.buildClientKey(it) == key }
+        }
+
+        val orderedFallbackClients =
+            if (authState.hasPlaybackLoginContext) {
+                STREAM_FALLBACK_CLIENTS.filter { it.loginSupported } + STREAM_FALLBACK_CLIENTS.filterNot { it.loginSupported }
+            } else {
+                STREAM_FALLBACK_CLIENTS.toList()
+            }
+
+        return buildList {
+            lastSuccessfulClient?.let { add(it) }
+            add(preferredYouTubeClient)
+            addAll(orderedFallbackClients)
+            if (preferredYouTubeClient != WEB_REMIX) add(WEB_REMIX)
+            if (preferredStreamClient == PlayerStreamClient.WEB_REMIX) {
+                addAll(STREAM_FALLBACK_CLIENTS)
+            }
+        }.distinct()
+    }
+
+    private fun buildPlaybackProbeRanges(): List<String> =
+        listOf(
+            "bytes=0-0",
+            "bytes=0-524287",
+            "bytes=1048576-1049087",
+        )
+
+    private fun validateStatus(url: String): Boolean {
+        UmihiHelper.printd("Validating stream URL status")
+        try {
+            val requestProfile = StreamClientUtils.resolveRequestProfile(url)
+            val probeRanges = buildPlaybackProbeRanges()
+
+            var sawReadableProbe = false
+            for (range in probeRanges) {
+                val rangeRequest = StreamClientUtils
+                    .applyRequestProfile(
+                        okhttp3.Request.Builder()
+                            .get()
+                            .header("Range", range)
+                            .url(url),
+                        requestProfile,
+                    ).build()
+
+                val probeValid =
+                    client.newCall(rangeRequest).execute().use { response ->
+                        val code = response.code
+                        if (code == 403) return@use false
+                        if (code !in 200..399 && code != 416) return@use false
+                        if (code == 416) return@use sawReadableProbe
+
+                        val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.US)
+                        if (
+                            contentType.startsWith("text/html") ||
+                            contentType.startsWith("text/plain") ||
+                            contentType.startsWith("application/json") ||
+                            contentType.startsWith("application/xml") ||
+                            contentType.startsWith("text/xml")
+                        ) {
+                            UmihiHelper.printd("Rejecting stream probe because it returned non-media content-type: $contentType")
+                            return@use false
+                        }
+
+                        val readable = response.body?.source()?.request(1) == true
+                        if (readable) {
+                            sawReadableProbe = true
+                        }
+                        readable
+                    }
+                if (!probeValid) return false
+            }
+
+            return true
+        } catch (e: Exception) {
+            UmihiHelper.printe("Stream URL validation failed with exception: ${e.message}")
+        }
+        return false
+    }
+
     /**
      * Resolves a stream URL from YouTube.
      * @param lowQuality If true, picks the lowest-bitrate audio stream for fastest startup.
@@ -728,16 +923,146 @@ object YoutubeHelper {
      *                       Picks the highest bitrate stream that doesn't exceed the ceiling.
      *                       If no stream is within the ceiling, falls back to the lowest available.
      */
+    private fun selectCandidates(
+        playerResponse: PlayerResponse,
+        lowQuality: Boolean,
+        maxBitrateKbps: Int
+    ): List<PlayerResponse.StreamingData.Format> {
+        val formats = playerResponse.streamingData?.adaptiveFormats
+            ?.filter { (it.mimeType.contains("audio", ignoreCase = true)) && it.bitrate > 0 }
+            .orEmpty()
+        if (formats.isEmpty()) return emptyList()
+
+        return when {
+            lowQuality -> formats.sortedBy { it.bitrate }
+            maxBitrateKbps > 0 -> {
+                val bpsCeiling = maxBitrateKbps * 1000
+                val withinCeiling = formats.filter { it.bitrate <= bpsCeiling }
+                if (withinCeiling.isNotEmpty()) {
+                    withinCeiling.sortedByDescending { it.bitrate }
+                } else {
+                    formats.sortedBy { it.bitrate }
+                }
+            }
+            else -> formats.sortedByDescending { it.bitrate }
+        }
+    }
+
+    /**
+     * Resolves a stream URL from YouTube using premium client fallbacks and validation ranges.
+     */
     private suspend fun getSongUrlFromYoutube(
+        context: Context,
         song: Song,
         retries: Int = Constants.YoutubeApi.RETRY_COUNT,
         lowQuality: Boolean = false,
         maxBitrateKbps: Int = 0
     ): String {
+        val videoId = song.youtubeId
+
+        val entryPoint = EntryPointAccessors.fromApplication(context.applicationContext, YoutubeHelperEntryPoint::class.java)
+        val preferredClient = entryPoint.userPreferencesRepository().playerStreamClientFlow.first()
+        var authState = YouTube.currentPlaybackAuthState()
+
+        val clients = buildStreamClientOrder(preferredClient, authState).filterNot { client ->
+            isStreamClientTemporarilyBlocked(videoId, client.clientName, authState.fingerprint)
+        }
+
+        var signatureTimestamp: Int? = null
+        try {
+            signatureTimestamp = NewPipeUtils.getSignatureTimestamp(videoId).getOrNull()
+        } catch (e: Exception) {
+            UmihiHelper.printe("Failed to get signature timestamp: ${e.message}")
+        }
+
+        var didRefreshVisitorData = false
+
+        for (clientObj in clients) {
+            try {
+                UmihiHelper.printd("Trying playback client: ${clientObj.clientName}")
+                var playerResResult = YouTube.player(
+                    videoId = videoId,
+                    playlistId = null,
+                    client = clientObj,
+                    signatureTimestamp = signatureTimestamp,
+                    setLogin = authState.hasPlaybackLoginContext,
+                    authState = authState
+                )
+
+                var playerResponse = playerResResult.getOrNull()
+                if (playerResponse == null) {
+                    UmihiHelper.printe("Player response was null for client ${clientObj.clientName}")
+                    continue
+                }
+
+                var status = playerResponse.playabilityStatus.status
+                var reason = playerResponse.playabilityStatus.reason.orEmpty()
+                val isBot = "bot" in reason.lowercase(Locale.US) || "unusual traffic" in reason.lowercase(Locale.US) || "automated" in reason.lowercase(Locale.US)
+
+                if (status != "OK" && isBot && !didRefreshVisitorData) {
+                    UmihiHelper.printd("Bot detection triggered. Refreshing visitorData...")
+                    val refreshedVisitorData = YouTube.visitorData().getOrNull()
+                    if (!refreshedVisitorData.isNullOrBlank()) {
+                        YouTube.visitorData = refreshedVisitorData
+                        authState = authState.copy(visitorData = refreshedVisitorData).normalized()
+                        didRefreshVisitorData = true
+
+                        playerResResult = YouTube.player(
+                            videoId = videoId,
+                            playlistId = null,
+                            client = clientObj,
+                            signatureTimestamp = signatureTimestamp,
+                            setLogin = authState.hasPlaybackLoginContext,
+                            authState = authState
+                        )
+                        playerResponse = playerResResult.getOrNull()
+                        if (playerResponse != null) {
+                            status = playerResponse.playabilityStatus.status
+                            reason = playerResponse.playabilityStatus.reason.orEmpty()
+                        }
+                    }
+                }
+
+                if (playerResponse == null || status != "OK") {
+                    UmihiHelper.printe("Playability check failed for client ${clientObj.clientName}: status=$status, reason=$reason")
+                    continue
+                }
+
+                val candidates = selectCandidates(playerResponse, lowQuality, maxBitrateKbps)
+                if (candidates.isEmpty()) {
+                    UmihiHelper.printe("No audio formats found for client ${clientObj.clientName}")
+                    continue
+                }
+
+                var resolvedUrl: String? = null
+                for (candidate in candidates) {
+                    if (shouldSkipCipheredWebCandidate(clientObj, candidate, authState)) continue
+                    val deobfuscated = NewPipeUtils.getStreamUrl(candidate, videoId, clientObj, authState).getOrNull() ?: continue
+                    val patched = StreamClientUtils.patchClientVersion(deobfuscated, clientObj.clientVersion)
+                    
+                    if (validateStatus(patched)) {
+                        resolvedUrl = patched
+                        lastSuccessfulClientKey = StreamClientUtils.buildClientKey(clientObj)
+                        UmihiHelper.printd("Successfully validated stream URL with client: ${clientObj.clientName}")
+                        break
+                    } else {
+                        UmihiHelper.printe("Stream URL validation failed for client ${clientObj.clientName}")
+                    }
+                }
+
+                if (resolvedUrl != null) {
+                    return resolvedUrl
+                }
+
+            } catch (e: Exception) {
+                UmihiHelper.printe("Error with client ${clientObj.clientName}: ${e.message}")
+            }
+        }
+
+        // Failsafe: Original NewPipe Extractor fallback
+        UmihiHelper.printd("All premium stream clients failed. Using failsafe NewPipe extractor...")
         val service = ServiceList.YouTube
-
         var attempts = 0
-
         repeat(retries) { attempt ->
             try {
                 attempts++
@@ -746,39 +1071,28 @@ object YoutubeHelper {
                     extractor.fetchPage()
                     val streams = extractor.audioStreams
                     val selectedStream = when {
-                        lowQuality -> {
-                            // Lowest bitrate = fastest to start buffering
-                            streams.minByOrNull { it.averageBitrate } ?: streams.first()
-                        }
+                        lowQuality -> streams.minByOrNull { it.averageBitrate } ?: streams.first()
                         maxBitrateKbps > 0 -> {
-                            // Quality ceiling: pick highest bitrate within ceiling
-                            val maxBitrateBps = maxBitrateKbps * 1000
-                            val withinCeiling = streams.filter { it.averageBitrate <= maxBitrateBps }
+                            val bpsCeiling = maxBitrateKbps * 1000
+                            val withinCeiling = streams.filter { it.averageBitrate <= bpsCeiling }
                             if (withinCeiling.isNotEmpty()) {
                                 withinCeiling.maxByOrNull { it.averageBitrate } ?: withinCeiling.first()
                             } else {
-                                // No stream within ceiling, pick lowest available
                                 streams.minByOrNull { it.averageBitrate } ?: streams.first()
                             }
                         }
-                        else -> {
-                            // Highest bitrate = best audio quality
-                            streams.maxByOrNull { it.averageBitrate } ?: streams.first()
-                        }
+                        else -> streams.maxByOrNull { it.averageBitrate } ?: streams.first()
                     }
                     selectedStream.content
                 }
-
                 return streamUrl
             } catch (e: Exception) {
-                UmihiHelper.printe(
-                    "Failed to get song ${song.youtubeId} from Youtube : Attempt -> $attempts/$retries : ${e.message}"
-                )
+                UmihiHelper.printe("Failsafe NewPipe extraction failed: ${e.message}")
                 delay(Constants.YoutubeApi.RETRY_DELAY * (attempt + 1))
             }
         }
 
-        throw Exception("Fatal fail for song ${song.youtubeId}. Could not get it after $attempts attempts")
+        throw Exception("Fatal fail for song ${song.youtubeId}. Could not get it after $attempts failsafe attempts")
     }
 
     private suspend fun isYoutubeUrlValid(url: String): Boolean = withContext(Dispatchers.IO) {
