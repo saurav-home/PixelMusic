@@ -275,7 +275,9 @@ private fun rememberMoodArtworkUrl(endpoint: BrowseEndpoint?): String? {
     val url by produceState(initialValue = cached, key1 = cacheKey) {
         if (!value.isNullOrBlank()) return@produceState
         val resolved = withContext(Dispatchers.IO) {
-            YouTube.browse(endpoint.browseId, endpoint.params).getOrNull()?.thumbnail
+            val browseResult = YouTube.browse(endpoint.browseId, endpoint.params).getOrNull()
+            browseResult?.thumbnail?.takeIf { it.isNotBlank() }
+                ?: browseResult?.items?.flatMap { it.items }?.firstOrNull { !it.thumbnail.isNullOrBlank() }?.thumbnail
         }
         if (!resolved.isNullOrBlank()) {
             moodArtworkCache[cacheKey] = resolved

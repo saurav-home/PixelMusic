@@ -388,12 +388,9 @@ fun HomeScreen(
                             song = yourMixSong,
                             isShuffleEnabled = isShuffleEnabled,
                             onPlayShuffled = {
-                                if (yourMixSongs.isNotEmpty()) {
-                                    playerViewModel.playSongsShuffled(
-                                        songsToPlay = yourMixSongs,
-                                        queueName = "Your Mix",
-                                        startAtZero = true,
-                                    )
+                                val songsToUse = quickPicks.ifEmpty { yourMixSongs }
+                                if (songsToUse.isNotEmpty()) {
+                                    playerViewModel.playQuickPicksRadio(songsToUse)
                                 }
                             }
                         )

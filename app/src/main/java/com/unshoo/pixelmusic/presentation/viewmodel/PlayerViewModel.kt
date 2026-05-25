@@ -13,6 +13,13 @@ import androidx.work.ExistingWorkPolicy
 import com.unshoo.pixelmusic.data.remote.youtube.SongDownloadWorker
 import com.unshoo.pixelmusic.data.remote.youtube.PlaylistDownloadWorker
 import com.unshoo.pixelmusic.data.remote.youtube.toNativeSong
+import com.unshoo.pixelmusic.data.database.SongEntity
+import com.unshoo.pixelmusic.data.database.AlbumEntity
+import com.unshoo.pixelmusic.data.database.ArtistEntity
+import com.unshoo.pixelmusic.data.database.SongArtistCrossRef
+import com.unshoo.pixelmusic.data.database.SourceType
+import com.unshoo.pixelmusic.data.database.serializeArtistRefs
+import com.unshoo.pixelmusic.data.database.MusicDao
 import unshoo.ianshulyadav.pixelmusic.innertube.models.SongItem
 import kotlinx.coroutines.flow.first
 import android.media.MediaMetadataRetriever
@@ -237,6 +244,7 @@ class PlayerViewModel @Inject constructor(
     private val themePreferencesRepository: ThemePreferencesRepository,
     private val albumArtThemeDao: AlbumArtThemeDao,
     val syncManager: SyncManager, // Inyectar SyncManager
+    private val musicDao: MusicDao,
 
     private val dualPlayerEngine: DualPlayerEngine,
     private val appShortcutManager: AppShortcutManager,
@@ -2299,6 +2307,169 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private suspend fun saveYoutubeSongsToDb(songs: List<Song>) {
+        val youtubeSongs = songs.filter { it.id.startsWith("youtube_") || it.youtubeId != null }
+        if (youtubeSongs.isEmpty()) return
+        
+        withContext(Dispatchers.IO) {
+            val songsToInsert = mutableListOf<SongEntity>()
+            val albumsToInsert = mutableListOf<AlbumEntity>()
+            val artistsToInsert = mutableListOf<ArtistEntity>()
+            val crossRefsToInsert = mutableListOf<SongArtistCrossRef>()
+            
+            youtubeSongs.forEach { song ->
+                val yId = song.youtubeId ?: song.id.removePrefix("youtube_")
+                val songId = -(15_000_000_000_000L + yId.hashCode().toLong().let { if (it < 0) -it else it })
+                
+                val existing = musicDao.getSongByIdOnce(songId)
+                if (existing == null) {
+                    val albumName = song.album.ifBlank { "YouTube Music" }
+                    val albumId = -(16_000_000_000_000L + albumName.lowercase().hashCode().toLong().let { if (it < 0) -it else it })
+                    val artistId = -(17_000_000_000_000L + song.artist.lowercase().hashCode().toLong().let { if (it < 0) -it else it })
+                    
+                    val artistEntity = ArtistEntity(
+                        id = artistId,
+                        name = song.artist,
+                        trackCount = 1,
+                        imageUrl = null
+                    )
+                    artistsToInsert.add(artistEntity)
+                    
+                    val albumEntity = AlbumEntity(
+                        id = albumId,
+                        title = albumName,
+                        artistName = song.artist,
+                        artistId = artistId,
+                        songCount = 1,
+                        dateAdded = System.currentTimeMillis(),
+                        year = 0,
+                        albumArtUriString = song.albumArtUriString
+                    )
+                    albumsToInsert.add(albumEntity)
+                    
+                    val artistRefs = song.artists.ifEmpty {
+                        listOf(
+                            com.unshoo.pixelmusic.data.model.ArtistRef(
+                                id = artistId,
+                                name = song.artist,
+                                isPrimary = true
+                            )
+                        )
+                    }
+                    
+                    val entity = SongEntity(
+                        id = songId,
+                        title = song.title,
+                        artistName = song.artist,
+                        artistId = artistId,
+                        albumArtist = song.albumArtist,
+                        albumName = albumName,
+                        albumId = albumId,
+                        contentUriString = "youtube://$yId",
+                        albumArtUriString = song.albumArtUriString,
+                        duration = song.duration,
+                        genre = "YouTube",
+                        filePath = song.path,
+                        parentDirectoryPath = "/Cloud/YouTube",
+                        isFavorite = song.isFavorite,
+                        lyrics = song.lyrics,
+                        trackNumber = song.trackNumber,
+                        discNumber = song.discNumber,
+                        year = song.year,
+                        dateAdded = System.currentTimeMillis(),
+                        mimeType = song.mimeType ?: "audio/webm",
+                        bitrate = song.bitrate,
+                        sampleRate = song.sampleRate,
+                        telegramChatId = null,
+                        telegramFileId = null,
+                        artistsJson = serializeArtistRefs(artistRefs),
+                        sourceType = SourceType.YOUTUBE
+                    )
+                    songsToInsert.add(entity)
+                    
+                    artistRefs.forEach { ref ->
+                        val refArtistId = if (ref.id > 0) -(17_000_000_000_000L + ref.name.lowercase().hashCode().toLong().let { if (it < 0) -it else it }) else ref.id
+                        crossRefsToInsert.add(
+                            SongArtistCrossRef(
+                                songId = songId,
+                                artistId = refArtistId,
+                                isPrimary = ref.isPrimary
+                            )
+                        )
+                    }
+                }
+            }
+            
+            if (songsToInsert.isNotEmpty()) {
+                musicDao.incrementalSyncMusicData(
+                    songs = songsToInsert,
+                    albums = albumsToInsert.distinctBy { it.id },
+                    artists = artistsToInsert.distinctBy { it.id },
+                    crossRefs = crossRefsToInsert,
+                    deletedSongIds = emptyList()
+                )
+            }
+        }
+    }
+
+    fun playQuickPicksRadio(quickPicks: List<Song>) {
+        if (quickPicks.isEmpty()) return
+        val first = quickPicks.first()
+        playSongs(listOf(first), first, "Quick Picks Radio")
+        
+        viewModelScope.launch {
+            val videoId = first.youtubeId ?: first.id.substringAfter("youtube_")
+            val endpoint = unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(videoId = videoId)
+            
+            _playerUiState.update { it.copy(isLoadingInitialSongs = true) }
+            val result = withContext(Dispatchers.IO) {
+                unshoo.ianshulyadav.pixelmusic.innertube.YouTube.next(endpoint)
+            }
+            result.onSuccess { nextResult ->
+                val relatedSongs = nextResult.items.map { it.toNativeSong() }
+                if (relatedSongs.isNotEmpty()) {
+                    val filteredRelated = relatedSongs.filter { it.youtubeId != videoId && it.id != first.id }
+                    val fullQueue = (listOf(first) + filteredRelated).take(50)
+                    
+                    saveYoutubeSongsToDb(fullQueue)
+                    
+                    withContext(Dispatchers.Main) {
+                        val controller = mediaController
+                        if (controller != null) {
+                            val newSongs = fullQueue.drop(1)
+                            val mediaItems = newSongs.map { MediaItemBuilder.build(it) }
+                            
+                            val totalCount = controller.mediaItemCount
+                            if (totalCount > 1) {
+                                controller.removeMediaItems(1, totalCount)
+                            }
+                            controller.addMediaItems(mediaItems)
+                            
+                            _playerUiState.update { 
+                                it.copy(
+                                    currentPlaybackQueue = fullQueue.toPlaybackQueue(),
+                                    currentQueueSourceName = "Quick Picks Radio"
+                                )
+                            }
+                        }
+                    }
+                    
+                    val lastSong = fullQueue.last()
+                    val lastVideoId = lastSong.youtubeId ?: lastSong.id.substringAfter("youtube_")
+                    com.unshoo.pixelmusic.data.remote.youtube.AutoQueueManager.seed(
+                        endpoint = nextResult.endpoint ?: endpoint,
+                        continuation = nextResult.continuation,
+                        videoId = lastVideoId
+                    )
+                }
+                _playerUiState.update { it.copy(isLoadingInitialSongs = false) }
+            }.onFailure { e ->
+                Timber.e(e, "Failed to build quick picks radio")
+                _playerUiState.update { it.copy(isLoadingInitialSongs = false) }
+            }
+        }
+    }
+
 
     private fun List<Song>.matchesSongOrder(contextSongs: List<Song>): Boolean {
         if (size != contextSongs.size) return false
@@ -3341,6 +3512,7 @@ class PlayerViewModel @Inject constructor(
             clearPreparingSongIfMatching()
             return
         }
+        saveYoutubeSongsToDb(songsToPlay)
         com.unshoo.pixelmusic.data.remote.youtube.AutoQueueManager.reset()
         val effectiveStartSong = songsToPlay.firstOrNull { it.id == startSong.id } ?: songsToPlay.first()
 
@@ -3682,25 +3854,56 @@ class PlayerViewModel @Inject constructor(
 
     fun downloadPlaylistSongs(playlistId: String, songIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) {
-            val workRequest = OneTimeWorkRequestBuilder<PlaylistDownloadWorker>()
-                .setInputData(
-                    workDataOf(
-                        PlaylistDownloadWorker.PLAYLIST_KEY to playlistId,
-                        "user_initiated" to true
+            val ytDb = com.unshoo.pixelmusic.data.database.youtube.AppDatabase.getInstance(context)
+            val ytPlaylist = ytDb.playlistRepository().getPlaylistById(playlistId)
+            if (ytPlaylist != null) {
+                val workRequest = OneTimeWorkRequestBuilder<PlaylistDownloadWorker>()
+                    .setInputData(
+                        workDataOf(
+                            PlaylistDownloadWorker.PLAYLIST_KEY to playlistId,
+                            "user_initiated" to true
+                        )
                     )
+                    .setConstraints(
+                        Constraints.Builder()
+                            .setRequiredNetworkType(NetworkType.CONNECTED)
+                            .setRequiresStorageNotLow(true)
+                            .build()
+                    )
+                    .build()
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "playlist_dl_$playlistId",
+                    ExistingWorkPolicy.KEEP,
+                    workRequest
                 )
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .setRequiresStorageNotLow(true)
-                        .build()
-                )
-                .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "playlist_dl_$playlistId",
-                ExistingWorkPolicy.KEEP,
-                workRequest
-            )
+            } else {
+                val songs = musicRepository.getSongsByIds(songIds).first()
+                songs.forEach { song ->
+                    val videoId = song.youtubeId ?: if (song.contentUriString?.startsWith("youtube://") == true) {
+                        song.contentUriString.substringAfter("youtube://")
+                    } else if (song.id.startsWith("youtube_")) {
+                        song.id.substringAfter("youtube_")
+                    } else {
+                        null
+                    }
+                    if (videoId != null) {
+                        val workRequest = OneTimeWorkRequestBuilder<SongDownloadWorker>()
+                            .setInputData(workDataOf(SongDownloadWorker.SONG_KEY to videoId))
+                            .setConstraints(
+                                Constraints.Builder()
+                                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                                    .setRequiresStorageNotLow(true)
+                                    .build()
+                            )
+                            .build()
+                        WorkManager.getInstance(context).enqueueUniqueWork(
+                            "dl_playlist_song_$videoId",
+                            ExistingWorkPolicy.KEEP,
+                            workRequest
+                        )
+                    }
+                }
+            }
         }
     }
 

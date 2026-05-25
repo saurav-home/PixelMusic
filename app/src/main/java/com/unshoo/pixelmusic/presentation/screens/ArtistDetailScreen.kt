@@ -562,7 +562,12 @@ fun ArtistDetailScreen(
                             onSubscribeClick = { viewModel.toggleSubscription() },
                             onBackPressed = { navController.popBackStack() },
                             onPlayClick = {
-                                if (songs.isNotEmpty()) {
+                                if (uiState.isOnlineArtist && uiState.browseId != null) {
+                                    playerViewModel.playRadio(
+                                        unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(playlistId = "RD" + uiState.browseId),
+                                        artist.name
+                                    )
+                                } else if (songs.isNotEmpty()) {
                                     playerViewModel.playSongsShuffled(
                                         songs,
                                         artist.name,
@@ -586,7 +591,12 @@ fun ArtistDetailScreen(
                             headerImageRequestSize = headerImageRequestSize,
                             onBackPressed = { navController.popBackStack() },
                             onPlayClick = {
-                                if (songs.isNotEmpty()) {
+                                if (uiState.isOnlineArtist && uiState.browseId != null) {
+                                    playerViewModel.playRadio(
+                                        unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(playlistId = "RD" + uiState.browseId),
+                                        artist.name
+                                    )
+                                } else if (songs.isNotEmpty()) {
                                     playerViewModel.playSongsShuffled(
                                         songs,
                                         artist.name,

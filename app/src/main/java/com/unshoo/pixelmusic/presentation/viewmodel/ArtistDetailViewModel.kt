@@ -79,7 +79,8 @@ class ArtistDetailViewModel @Inject constructor(
     private val artistImageRepository: ArtistImageRepository,
     val themeStateHolder: ThemeStateHolder,
     private val userPreferencesRepository: UserPreferencesRepository,
-    private val savedStateHandle: SavedStateHandle
+    private val savedStateHandle: SavedStateHandle,
+    private val musicDao: com.unshoo.pixelmusic.data.database.MusicDao
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ArtistDetailUiState())
@@ -116,6 +117,24 @@ class ArtistDetailViewModel @Inject constructor(
             userPreferencesRepository.subscribeArtist(artistIdStr, subscribe)
             if (browseId != null && browseId != artistIdStr) {
                 userPreferencesRepository.subscribeArtist(browseId, subscribe)
+            }
+
+            if (subscribe) {
+                val artist = uiState.value.artist
+                if (artist != null) {
+                    val finalArtistId = if (artist.id < 0) artist.id else -(17_000_000_000_000L + kotlin.math.abs(artist.name.lowercase().hashCode().toLong()))
+                    val artistEntity = com.unshoo.pixelmusic.data.database.ArtistEntity(
+                        id = finalArtistId,
+                        name = artist.name,
+                        trackCount = artist.songCount,
+                        imageUrl = artist.imageUrl ?: uiState.value.effectiveImageUrl,
+                        customImageUri = artist.customImageUri,
+                        channelId = browseId ?: artist.channelId
+                    )
+                    withContext(Dispatchers.IO) {
+                        musicDao.insertArtists(listOf(artistEntity))
+                    }
+                }
             }
         }
     }

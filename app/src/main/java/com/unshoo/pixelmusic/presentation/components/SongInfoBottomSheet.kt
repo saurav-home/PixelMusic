@@ -102,7 +102,7 @@ fun SongInfoBottomSheet(
     onDeleteFromDevice: (activity: Activity, song: Song, onResult: (Boolean) -> Unit) -> Unit,
     onNavigateToAlbum: () -> Unit,
     onNavigateToArtist: () -> Unit,
-    onNavigateToArtistById: (Long) -> Unit = { onNavigateToArtist() },
+    onNavigateToArtistById: (String) -> Unit = { _ -> onNavigateToArtist() },
     onNavigateToGenre: () -> Unit,
     onEditSong: (
         title: String,
@@ -784,7 +784,8 @@ fun SongInfoBottomSheet(
                                                         if (song.artists.size > 1) {
                                                             showArtistPicker = true
                                                         } else {
-                                                            onNavigateToArtist()
+                                                            val primary = song.primaryArtist
+                                                            onNavigateToArtistById(primary.channelId ?: primary.id.toString())
                                                         }
                                                     },
                                                 )
@@ -926,9 +927,9 @@ fun SongInfoBottomSheet(
             sheetState = artistPickerSheetState,
             onDismiss = { showArtistPicker = false },
             onArtistClick = { artist ->
-                showArtistPicker = false
-                onNavigateToArtistById(artist.id)
-            }
+                                showArtistPicker = false
+                                onNavigateToArtistById(artist.channelId ?: artist.id.toString())
+                            }
         )
     }
 }

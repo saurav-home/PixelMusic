@@ -36,25 +36,32 @@ fun upgradeThumbnailUrlToHighQuality(url: String?): String? {
 }
 
 fun SongItem.toNativeSong(): Song {
-    val artistName = artists.joinToString { it.name }
-    val artistIdHash = artists.firstOrNull()?.name?.hashCode()?.toLong() ?: 0L
-    val songId = "youtube_$id"
-    val artistRefs = artists.map { artist ->
+    val rawArtistName = artists.joinToString { it.name }
+    val artistNames = com.unshoo.pixelmusic.data.stream.CloudMusicUtils.parseArtistNames(rawArtistName)
+    val artistRefs = artistNames.mapIndexed { index, name ->
+        val originalArtist = artists.find { it.name.equals(name, ignoreCase = true) }
+        val artistId = -(17_000_000_000_000L + kotlin.math.abs(name.lowercase().hashCode().toLong()))
         ArtistRef(
-            id = artist.name.hashCode().toLong(),
-            name = artist.name,
-            isPrimary = artist == artists.firstOrNull(),
-            channelId = artist.id
+            id = artistId,
+            name = name,
+            isPrimary = index == 0,
+            channelId = originalArtist?.id
         )
     }
+    val artistName = artistNames.joinToString(", ")
+    val primaryArtistId = artistRefs.firstOrNull()?.id ?: 0L
+    val songId = "youtube_$id"
+    val albumName = album?.name ?: "YouTube Music"
+    val albumId = -(16_000_000_000_000L + kotlin.math.abs(albumName.lowercase().hashCode().toLong()))
+    
     return Song(
         id = songId,
         title = title,
         artist = artistName,
-        artistId = artistIdHash,
+        artistId = primaryArtistId,
         artists = artistRefs,
-        album = album?.name ?: "YouTube Music",
-        albumId = (album?.name ?: "YouTube Music").hashCode().toLong(),
+        album = albumName,
+        albumId = albumId,
         albumArtist = artistName,
         path = "",
         contentUriString = "youtube://$id",
@@ -84,22 +91,35 @@ fun SongItem.toNativeSong(): Song {
 }
 
 fun com.unshoo.pixelmusic.data.model.youtube.Song.toNativeSong(): Song {
-    val durationMillis = parseDurationStringToMillis(duration)
-    val artistIdHash = artist.hashCode().toLong()
+    val artistNames = com.unshoo.pixelmusic.data.stream.CloudMusicUtils.parseArtistNames(artist)
+    val artistRefs = artistNames.mapIndexed { index, name ->
+        val artistId = -(17_000_000_000_000L + kotlin.math.abs(name.lowercase().hashCode().toLong()))
+        ArtistRef(
+            id = artistId,
+            name = name,
+            isPrimary = index == 0,
+            channelId = null
+        )
+    }
+    val artistName = artistNames.joinToString(", ")
+    val primaryArtistId = artistRefs.firstOrNull()?.id ?: 0L
     val songId = "youtube_$youtubeId"
+    val albumName = "YouTube Music"
+    val albumId = -(16_000_000_000_000L + kotlin.math.abs(albumName.lowercase().hashCode().toLong()))
+    
     return Song(
         id = songId,
         title = title,
-        artist = artist,
-        artistId = artistIdHash,
-        artists = listOf(ArtistRef(id = artistIdHash, name = artist, isPrimary = true)),
-        album = "YouTube Music",
-        albumId = "YouTube Music".hashCode().toLong(),
-        albumArtist = artist,
+        artist = artistName,
+        artistId = primaryArtistId,
+        artists = artistRefs,
+        album = albumName,
+        albumId = albumId,
+        albumArtist = artistName,
         path = audioFilePath.orEmpty(),
         contentUriString = "youtube://$youtubeId",
         albumArtUriString = upgradeThumbnailUrlToHighQuality(thumbnailPath ?: thumbnailHref),
-        duration = durationMillis,
+        duration = parseDurationStringToMillis(duration),
         genre = "YouTube",
         lyrics = null,
         isFavorite = false,

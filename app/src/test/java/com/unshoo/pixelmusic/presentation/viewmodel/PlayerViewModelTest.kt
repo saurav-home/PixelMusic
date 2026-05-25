@@ -72,6 +72,7 @@ class PlayerViewModelTest {
 
     // New Mocks
     private val mockSyncManager: SyncManager = mockk(relaxed = true)
+    private val mockMusicDao: com.unshoo.pixelmusic.data.database.MusicDao = mockk(relaxed = true)
     private val mockDualPlayerEngine: DualPlayerEngine = mockk(relaxed = true)
     private val mockAppShortcutManager: AppShortcutManager = mockk(relaxed = true)
     private val mockTelegramCacheManager: TelegramCacheManager = mockk(relaxed = true)
@@ -249,6 +250,7 @@ class PlayerViewModelTest {
             mockThemePreferencesRepository,
             mockAlbumArtThemeDao,
             mockSyncManager,
+            mockMusicDao,
             mockDualPlayerEngine,
             mockAppShortcutManager,
             mockTelegramCacheManagerProvider,

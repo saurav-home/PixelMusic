@@ -162,7 +162,45 @@ class SearchStateHolder @Inject constructor(
                         }.flowOn(Dispatchers.IO)
 
                         combine(localSearchFlow, youtubeSearchFlow) { localResults, youtubeResults ->
-                            val combined = youtubeResults + localResults
+                            val localSongsMap = localResults.filterIsInstance<SearchResultItem.SongItem>()
+                                .map { it.song }
+                                .filter { !it.youtubeId.isNullOrBlank() }
+                                .associateBy { it.youtubeId!! }
+
+                            val youtubeIdsSet = youtubeResults.filterIsInstance<SearchResultItem.SongItem>()
+                                .mapNotNull { it.song.youtubeId }
+                                .toSet()
+
+                            val updatedYoutubeResults = youtubeResults.map { ytResult ->
+                                if (ytResult is SearchResultItem.SongItem) {
+                                    val ytId = ytResult.song.youtubeId
+                                    val matchingLocalSong = localSongsMap[ytId]
+                                    if (matchingLocalSong != null) {
+                                        SearchResultItem.SongItem(
+                                            ytResult.song.copy(
+                                                id = matchingLocalSong.id,
+                                                path = matchingLocalSong.path,
+                                                isFavorite = matchingLocalSong.isFavorite
+                                            )
+                                        )
+                                    } else {
+                                        ytResult
+                                    }
+                                } else {
+                                    ytResult
+                                }
+                            }
+
+                            val filteredLocalResults = localResults.filter { localResult ->
+                                if (localResult is SearchResultItem.SongItem) {
+                                    val ytId = localResult.song.youtubeId
+                                    ytId.isNullOrBlank() || !youtubeIdsSet.contains(ytId)
+                                } else {
+                                    true
+                                }
+                            }
+
+                            val combined = updatedYoutubeResults + filteredLocalResults
                             combined.sortedWith(
                                 compareBy { result ->
                                     when (result) {

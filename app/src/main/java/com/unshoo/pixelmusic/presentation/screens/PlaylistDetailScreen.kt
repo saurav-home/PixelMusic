@@ -358,7 +358,12 @@ fun PlaylistDetailScreen(
                 ) {
                     Button(
                         onClick = {
-                            if (localReorderableSongs.isNotEmpty()) {
+                            if (currentPlaylist.source == "YOUTUBE") {
+                                playerViewModel.playRadio(
+                                    unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(playlistId = currentPlaylist.id),
+                                    currentPlaylist.name
+                                )
+                            } else if (localReorderableSongs.isNotEmpty()) {
                                 playerViewModel.playSongs(
                                     localReorderableSongs,
                                     localReorderableSongs.first(),
@@ -370,7 +375,7 @@ fun PlaylistDetailScreen(
                         modifier = Modifier
                             .weight(1f)
                             .height(76.dp),
-                        enabled = localReorderableSongs.isNotEmpty(),
+                        enabled = currentPlaylist.source == "YOUTUBE" || localReorderableSongs.isNotEmpty(),
                         shape = AbsoluteSmoothCornerShape(
                             cornerRadiusTL = 60.dp,
                             smoothnessAsPercentTR = 60,
@@ -392,7 +397,12 @@ fun PlaylistDetailScreen(
                     }
                     FilledTonalButton(
                         onClick = {
-                            if (localReorderableSongs.isNotEmpty()) {
+                            if (currentPlaylist.source == "YOUTUBE") {
+                                playerViewModel.playRadio(
+                                    unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(playlistId = currentPlaylist.id),
+                                    currentPlaylist.name
+                                )
+                            } else if (localReorderableSongs.isNotEmpty()) {
                                 playerViewModel.playSongsShuffled(
                                     songsToPlay = localReorderableSongs,
                                     queueName = currentPlaylist.name,
@@ -404,7 +414,7 @@ fun PlaylistDetailScreen(
                         modifier = Modifier
                             .weight(1f)
                             .height(76.dp),
-                        enabled = localReorderableSongs.isNotEmpty(),
+                        enabled = currentPlaylist.source == "YOUTUBE" || localReorderableSongs.isNotEmpty(),
                         shape = AbsoluteSmoothCornerShape(
                             cornerRadiusTL = 14.dp,
                             smoothnessAsPercentTR = 60,
@@ -541,22 +551,20 @@ fun PlaylistDetailScreen(
                             )
                         }
 
-                        if (currentPlaylist.source == "YOUTUBE") {
-                            FilledTonalIconButton(
-                                onClick = {
-                                    playerViewModel.downloadPlaylistSongs(currentPlaylist.id, currentPlaylist.songIds)
-                                },
-                                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    contentColor = MaterialTheme.colorScheme.onSurface
-                                ),
-                                modifier = Modifier.size(actionButtonsHeight)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Download,
-                                    contentDescription = downloadPlaylistLabel
-                                )
-                            }
+                        FilledTonalIconButton(
+                            onClick = {
+                                playerViewModel.downloadPlaylistSongs(currentPlaylist.id, currentPlaylist.songIds)
+                            },
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            modifier = Modifier.size(actionButtonsHeight)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Download,
+                                contentDescription = downloadPlaylistLabel
+                            )
                         }
                     }
                 }
@@ -786,18 +794,16 @@ fun PlaylistDetailScreen(
                         m3uExportLauncher.launch("${currentPlaylist?.name ?: fallbackPlaylistName}.m3u")
                     }
                 )
-                if (currentPlaylist?.source == "YOUTUBE") {
-                    PlaylistActionItem(
-                        icon = rememberVectorPainter(Icons.Rounded.Download),
-                        label = downloadPlaylistLabel,
-                        onClick = {
-                            showPlaylistOptionsSheet = false
-                            currentPlaylist.let { playlist ->
-                                playerViewModel.downloadPlaylistSongs(playlist.id, playlist.songIds)
-                            }
+                PlaylistActionItem(
+                    icon = rememberVectorPainter(Icons.Rounded.Download),
+                    label = downloadPlaylistLabel,
+                    onClick = {
+                        showPlaylistOptionsSheet = false
+                        currentPlaylist?.let { playlist ->
+                            playerViewModel.downloadPlaylistSongs(playlist.id, playlist.songIds)
                         }
-                    )
-                }
+                    }
+                )
             }
         }
     }

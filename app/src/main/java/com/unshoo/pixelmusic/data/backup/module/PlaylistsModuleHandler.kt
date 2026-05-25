@@ -1,5 +1,6 @@
 package com.unshoo.pixelmusic.data.backup.module
 
+import kotlin.math.absoluteValue
 import android.content.Context
 import android.util.Base64
 import android.util.Log
@@ -44,23 +45,33 @@ class PlaylistsModuleHandler @Inject constructor(
         // Build a set of cloud song IDs to exclude from backup
         val cloudSongIds = buildCloudSongIdSet()
 
-        // Get metadata for local songs so we can match them on restore
-        val allLocalSummaries = musicDao.getAllLocalSongSummaries()
+        // Get metadata for local/YouTube songs so we can match them on restore
+        val allLocalSummaries = musicDao.getAllSongsList()
         val summaryById = allLocalSummaries.associateBy { it.id.toString() }
 
         // Filter cloud songs out of playlists and collect metadata
         val songMetadata = mutableMapOf<String, SongMetadataEntry>()
         val filteredPlaylists = playlists.map { playlist ->
             val localSongIds = playlist.songIds.filter { id -> id !in cloudSongIds }
-            // Collect metadata for matched local songs
+            // Collect metadata for matched local/YouTube songs
             localSongIds.forEach { id ->
                 if (id !in songMetadata) {
                     summaryById[id]?.let { summary ->
+                        val videoId = if (summary.sourceType == com.unshoo.pixelmusic.data.database.SourceType.YOUTUBE) {
+                            summary.contentUriString.substringAfter("youtube://")
+                        } else {
+                            null
+                        }
                         songMetadata[id] = SongMetadataEntry(
                             title = summary.title,
                             artist = summary.artistName,
                             album = summary.albumName,
-                            duration = summary.duration
+                            duration = summary.duration,
+                            youtubeId = videoId,
+                            contentUriString = summary.contentUriString,
+                            albumArtUriString = summary.albumArtUriString,
+                            path = summary.filePath,
+                            sourceType = summary.sourceType
                         )
                     }
                 }
@@ -117,6 +128,126 @@ class PlaylistsModuleHandler @Inject constructor(
         val backupPlaylists = parsed.playlists.orEmpty()
         val songMetadata = parsed.songMetadata
         val coverImages = parsed.coverImages
+
+        // Check for missing YouTube songs and incrementally restore their skeleton entities
+        if (songMetadata != null && songMetadata.isNotEmpty()) {
+            val localSongs = musicDao.getAllSongsList()
+            val currentSongsById = localSongs.associateBy { it.id.toString() }
+            
+            val songsToInsert = mutableListOf<com.unshoo.pixelmusic.data.database.SongEntity>()
+            val albumsToInsert = mutableListOf<com.unshoo.pixelmusic.data.database.AlbumEntity>()
+            val artistsToInsert = mutableListOf<com.unshoo.pixelmusic.data.database.ArtistEntity>()
+            val crossRefsToInsert = mutableListOf<com.unshoo.pixelmusic.data.database.SongArtistCrossRef>()
+            
+            songMetadata.forEach { (songIdStr, entry) ->
+                val isYoutube = entry.sourceType == 4 || entry.youtubeId != null || entry.contentUriString?.startsWith("youtube://") == true
+                if (isYoutube && !currentSongsById.containsKey(songIdStr)) {
+                    val songId = songIdStr.toLongOrNull() ?: return@forEach
+                    val videoId = entry.youtubeId ?: entry.contentUriString?.substringAfter("youtube://") ?: return@forEach
+                    
+                    val albumName = entry.album.ifBlank { "YouTube Music" }
+                    val albumId = -(16_000_000_000_000L + albumName.lowercase().hashCode().toLong().absoluteValue)
+                    
+                    val artistNames = com.unshoo.pixelmusic.data.stream.CloudMusicUtils.parseArtistNames(entry.artist)
+                    val primaryArtistName = artistNames.firstOrNull() ?: "Unknown Artist"
+                    val primaryArtistId = -(17_000_000_000_000L + primaryArtistName.lowercase().hashCode().toLong().absoluteValue)
+                    
+                    artistNames.forEachIndexed { index, name ->
+                        val artistId = -(17_000_000_000_000L + name.lowercase().hashCode().toLong().absoluteValue)
+                        artistsToInsert.add(
+                            com.unshoo.pixelmusic.data.database.ArtistEntity(
+                                id = artistId,
+                                name = name,
+                                trackCount = 1,
+                                imageUrl = null
+                            )
+                        )
+                        crossRefsToInsert.add(
+                            com.unshoo.pixelmusic.data.database.SongArtistCrossRef(
+                                songId = songId,
+                                artistId = artistId,
+                                isPrimary = index == 0
+                            )
+                        )
+                    }
+                    
+                    albumsToInsert.add(
+                        com.unshoo.pixelmusic.data.database.AlbumEntity(
+                            id = albumId,
+                            title = albumName,
+                            artistName = primaryArtistName,
+                            artistId = primaryArtistId,
+                            songCount = 1,
+                            dateAdded = System.currentTimeMillis(),
+                            year = 0,
+                            albumArtUriString = entry.albumArtUriString
+                        )
+                    )
+                    
+                    val artistRefs = artistNames.mapIndexed { idx, name ->
+                        com.unshoo.pixelmusic.data.model.ArtistRef(
+                            id = -(17_000_000_000_000L + name.lowercase().hashCode().toLong().absoluteValue),
+                            name = name,
+                            isPrimary = idx == 0
+                        )
+                    }
+                    val artistsJson = try {
+                        val arr = org.json.JSONArray()
+                        artistRefs.forEach { ref ->
+                            val obj = org.json.JSONObject()
+                            obj.put("id", ref.id)
+                            obj.put("name", ref.name)
+                            obj.put("primary", ref.isPrimary)
+                            arr.put(obj)
+                        }
+                        arr.toString()
+                    } catch (e: Exception) {
+                        null
+                    }
+                    
+                    songsToInsert.add(
+                        com.unshoo.pixelmusic.data.database.SongEntity(
+                            id = songId,
+                            title = entry.title,
+                            artistName = entry.artist,
+                            artistId = primaryArtistId,
+                            albumArtist = null,
+                            albumName = albumName,
+                            albumId = albumId,
+                            contentUriString = entry.contentUriString ?: "youtube://$videoId",
+                            albumArtUriString = entry.albumArtUriString,
+                            duration = entry.duration,
+                            genre = "YouTube",
+                            filePath = entry.path ?: "",
+                            parentDirectoryPath = "/Cloud/YouTube",
+                            isFavorite = false,
+                            lyrics = null,
+                            trackNumber = 0,
+                            discNumber = null,
+                            year = 0,
+                            dateAdded = System.currentTimeMillis(),
+                            mimeType = "audio/webm",
+                            bitrate = null,
+                            sampleRate = null,
+                            telegramChatId = null,
+                            telegramFileId = null,
+                            artistsJson = artistsJson,
+                            sourceType = com.unshoo.pixelmusic.data.database.SourceType.YOUTUBE
+                        )
+                    )
+                }
+            }
+            
+            if (songsToInsert.isNotEmpty()) {
+                musicDao.incrementalSyncMusicData(
+                    songs = songsToInsert,
+                    albums = albumsToInsert.distinctBy { it.id },
+                    artists = artistsToInsert.distinctBy { it.id },
+                    crossRefs = crossRefsToInsert,
+                    deletedSongIds = emptyList()
+                )
+            }
+        }
 
         // Resolve song IDs against the current device library
         val resolvedPlaylists = if (songMetadata != null && songMetadata.isNotEmpty()) {
@@ -192,7 +323,16 @@ class PlaylistsModuleHandler @Inject constructor(
         playlists: List<Playlist>,
         songMetadata: Map<String, SongMetadataEntry>
     ): List<Playlist> {
-        val localSummaries = musicDao.getAllLocalSongSummaries()
+        val localSongs = musicDao.getAllSongsList()
+        val localSummaries = localSongs.map { entity ->
+            SongSummary(
+                id = entity.id,
+                title = entity.title,
+                artistName = entity.artistName,
+                albumName = entity.albumName,
+                duration = entity.duration
+            )
+        }
         val currentSongsById = localSummaries.associateBy { it.id.toString() }
 
         // Build index for metadata matching: normalized "title|artist" → list of candidates
@@ -356,7 +496,12 @@ class PlaylistsModuleHandler @Inject constructor(
         val title: String,
         val artist: String,
         val album: String,
-        val duration: Long
+        val duration: Long,
+        val youtubeId: String? = null,
+        val contentUriString: String? = null,
+        val albumArtUriString: String? = null,
+        val path: String? = null,
+        val sourceType: Int? = null
     )
 
     private data class PlaylistsBackupPayload(

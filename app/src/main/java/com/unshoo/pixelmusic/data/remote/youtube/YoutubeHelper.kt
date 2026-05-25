@@ -513,6 +513,11 @@ object YoutubeHelper {
     ): String {
         val videoId = song.youtubeId
 
+        if (song.audioFilePath?.isNotBlank() == true && File(song.audioFilePath).exists()) {
+            UmihiHelper.printd("$videoId : Playing directly from song.audioFilePath: ${song.audioFilePath}")
+            return song.audioFilePath
+        }
+
         // ── OFFLINE-FIRST GATE ─────────────────────────────────────────────────
         // Check in-memory local path cache (populated by downloads/workers)
         val cachedLocalPath = localFilePathCache.get(videoId)
@@ -591,6 +596,10 @@ object YoutubeHelper {
     suspend fun getLowestQualityStreamUrl(context: Context, song: Song): String {
         val videoId = song.youtubeId
 
+        if (song.audioFilePath?.isNotBlank() == true && File(song.audioFilePath).exists()) {
+            return song.audioFilePath
+        }
+
         // Offline-first gate
         val cachedLocalPath = localFilePathCache.get(videoId)
         if (cachedLocalPath != null && File(cachedLocalPath).exists()) {
@@ -618,6 +627,10 @@ object YoutubeHelper {
      */
     suspend fun getHighestQualityStreamUrl(context: Context, song: Song): String {
         val videoId = song.youtubeId
+
+        if (song.audioFilePath?.isNotBlank() == true && File(song.audioFilePath).exists()) {
+            return song.audioFilePath
+        }
 
         // Offline-first gate
         val cachedLocalPath = localFilePathCache.get(videoId)
@@ -665,6 +678,10 @@ object YoutubeHelper {
         maxBitrateKbps: Int = 0
     ): String {
         val videoId = song.youtubeId
+
+        if (song.audioFilePath?.isNotBlank() == true && File(song.audioFilePath).exists()) {
+            return song.audioFilePath
+        }
 
         // Offline-first gate
         val cachedLocalPath = localFilePathCache.get(videoId)
@@ -927,14 +944,19 @@ object YoutubeHelper {
         maxBitrateKbps: Int
     ): List<PlayerResponse.StreamingData.Format> {
         val formats = playerResponse.streamingData?.adaptiveFormats
-            ?.filter { (it.mimeType.contains("audio", ignoreCase = true)) && it.bitrate > 0 }
+            ?.filter { 
+                it.mimeType.contains("audio", ignoreCase = true) && 
+                it.bitrate > 0 &&
+                !it.mimeType.contains("mp3", ignoreCase = true) &&
+                !it.mimeType.contains("mpeg", ignoreCase = true) &&
+                !it.mimeType.contains("mpga", ignoreCase = true)
+            }
             .orEmpty()
         if (formats.isEmpty()) return emptyList()
 
-        // Partition into M4A (mp4/mp4a) and Opus (webm/opus)
-        val (m4aFormats, opusFormats) = formats.partition { 
-            it.mimeType.contains("mp4", ignoreCase = true) || it.mimeType.contains("mp4a", ignoreCase = true)
-        }
+        val webmFormats = formats.filter { it.mimeType.contains("webm", ignoreCase = true) }
+        val m4aFormats = formats.filter { it.mimeType.contains("mp4", ignoreCase = true) || it.mimeType.contains("m4a", ignoreCase = true) || it.mimeType.contains("mp4a", ignoreCase = true) }
+        val opusFormats = formats.filter { it.mimeType.contains("opus", ignoreCase = true) && !it.mimeType.contains("webm", ignoreCase = true) }
 
         fun sortGroup(group: List<PlayerResponse.StreamingData.Format>): List<PlayerResponse.StreamingData.Format> {
             if (group.isEmpty()) return emptyList()
@@ -953,10 +975,7 @@ object YoutubeHelper {
             }
         }
 
-        val sortedM4a = sortGroup(m4aFormats)
-        val sortedOpus = sortGroup(opusFormats)
-
-        return sortedM4a + sortedOpus
+        return sortGroup(webmFormats) + sortGroup(m4aFormats) + sortGroup(opusFormats)
     }
 
     /**
@@ -1080,20 +1099,48 @@ object YoutubeHelper {
                 val streamUrl = withContext(Dispatchers.IO) {
                     val extractor = service.getStreamExtractor(song.youtubeUrl)
                     extractor.fetchPage()
-                    val streams = extractor.audioStreams
-                    val selectedStream = when {
-                        lowQuality -> streams.minByOrNull { it.averageBitrate } ?: streams.first()
-                        maxBitrateKbps > 0 -> {
-                            val bpsCeiling = maxBitrateKbps * 1000
-                            val withinCeiling = streams.filter { it.averageBitrate <= bpsCeiling }
-                            if (withinCeiling.isNotEmpty()) {
-                                withinCeiling.maxByOrNull { it.averageBitrate } ?: withinCeiling.first()
-                            } else {
-                                streams.minByOrNull { it.averageBitrate } ?: streams.first()
-                            }
-                        }
-                        else -> streams.maxByOrNull { it.averageBitrate } ?: streams.first()
+                    val streams = extractor.audioStreams.filter { stream ->
+                        val suffix = stream.format?.suffix?.lowercase().orEmpty()
+                        val name = stream.format?.name?.lowercase().orEmpty()
+                        !suffix.contains("mp3") && !suffix.contains("mpeg") && !suffix.contains("mpga") &&
+                        !name.contains("mp3") && !name.contains("mpeg") && !name.contains("mpga")
                     }
+                    val webmStreams = streams.filter { stream ->
+                        val suffix = stream.format?.suffix?.lowercase().orEmpty()
+                        val name = stream.format?.name?.lowercase().orEmpty()
+                        suffix.contains("webm") || name.contains("webm")
+                    }
+                    val m4aStreams = streams.filter { stream ->
+                        val suffix = stream.format?.suffix?.lowercase().orEmpty()
+                        val name = stream.format?.name?.lowercase().orEmpty()
+                        suffix.contains("m4a") || name.contains("m4a") || suffix.contains("mp4") || name.contains("mp4")
+                    }
+                    val otherStreams = streams.filter { stream ->
+                        val suffix = stream.format?.suffix?.lowercase().orEmpty()
+                        val name = stream.format?.name?.lowercase().orEmpty()
+                        (suffix.contains("opus") || name.contains("opus")) &&
+                        !(suffix.contains("webm") || name.contains("webm"))
+                    }
+
+                    fun sortNewPipeGroup(group: List<org.schabi.newpipe.extractor.stream.AudioStream>): List<org.schabi.newpipe.extractor.stream.AudioStream> {
+                        if (group.isEmpty()) return emptyList()
+                        return when {
+                            lowQuality -> group.sortedBy { it.averageBitrate }
+                            maxBitrateKbps > 0 -> {
+                                val bpsCeiling = maxBitrateKbps * 1000
+                                val withinCeiling = group.filter { it.averageBitrate <= bpsCeiling }
+                                if (withinCeiling.isNotEmpty()) {
+                                    withinCeiling.sortedByDescending { it.averageBitrate }
+                                } else {
+                                    group.sortedBy { it.averageBitrate }
+                                }
+                            }
+                            else -> group.sortedByDescending { it.averageBitrate }
+                        }
+                    }
+
+                    val orderedStreams = sortNewPipeGroup(webmStreams) + sortNewPipeGroup(m4aStreams) + sortNewPipeGroup(otherStreams)
+                    val selectedStream = orderedStreams.firstOrNull() ?: streams.firstOrNull() ?: throw Exception("No audio streams found after filtering")
                     selectedStream.content
                 }
                 return streamUrl

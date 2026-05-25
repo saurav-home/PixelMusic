@@ -97,7 +97,7 @@ class SongInfoBottomSheetViewModel @Inject constructor(
             return
         }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val ids = refs.map { it.id }.filter { it > 0L }.distinct()
+            val ids = refs.map { it.id }.filter { it != -1L && it != 0L }.distinct()
             val entitiesById = if (ids.isNotEmpty()) {
                 musicDao.getArtistsByIds(ids).associateBy { it.id }
             } else {

@@ -53,8 +53,8 @@ class InnerTube {
     private var httpClient = createClient()
 
     var locale = YouTubeLocale(
-        gl = Locale.getDefault().country,
-        hl = Locale.getDefault().toLanguageTag()
+        gl = if (Locale.getDefault().country == "IN") "IN" else Locale.getDefault().country,
+        hl = if (Locale.getDefault().country == "IN") "en-IN" else Locale.getDefault().toLanguageTag()
     )
     @Volatile
     private var authState: PlaybackAuthState = PlaybackAuthState.EMPTY
