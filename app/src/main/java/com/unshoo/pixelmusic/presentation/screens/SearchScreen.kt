@@ -146,7 +146,9 @@ fun SearchScreen(
     navController: NavHostController,
     onSearchBarActiveChange: (Boolean) -> Unit = {}
 ) {
-    var searchQuery by rememberSaveable { mutableStateOf(playerViewModel.searchQuery) }
+    // Always reset search query to empty on every visit so the screen starts
+    // at the Moods & Genres section (as requested by the user).
+    var searchQuery by remember { mutableStateOf("") }
     val statusBarTopInset = WindowInsets.systemBars.asPaddingValues().calculateTopPadding()
     val systemNavBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val navBarCompactMode by playerViewModel.navBarCompactMode.collectAsStateWithLifecycle()
@@ -173,9 +175,14 @@ fun SearchScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val searchInputFocusRequester = remember { FocusRequester() }
 
+    // On every visit to the search screen, clear the query + results so we
+    // always land on the Moods & Genres browse page.
     LaunchedEffect(Unit) {
         onSearchBarActiveChange(false)
+        searchQuery = ""
+        playerViewModel.performSearch("")
     }
+
 
     LaunchedEffect(playerViewModel, keyboardController) {
         playerViewModel.searchNavDoubleTapEvents.collect {
@@ -770,18 +777,24 @@ fun SearchResultsList(
     }
     val onSongResultClick = remember(playerViewModel, onItemSelected, searchQueueName, songResultsQueue) {
         { song: Song ->
-            val youtubeId = song.youtubeId ?: if (song.id.startsWith("youtube_")) song.id.substringAfter("youtube_") else null
+            // INSTANT PLAYBACK FIX: Always play the song immediately via showAndPlaySong.
+            // This gives instant response on tap without waiting for a network call.
+            // For YouTube songs, we also kick off a background radio expansion to fill the queue.
+            playerViewModel.showAndPlaySong(song, songResultsQueue, searchQueueName)
+
+            val youtubeId = song.youtubeId
+                ?: if (song.id.startsWith("youtube_")) song.id.substringAfter("youtube_") else null
             if (youtubeId != null) {
+                // Asynchronously expand the queue via radio endpoint (background, non-blocking)
                 playerViewModel.playRadio(
                     unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(videoId = youtubeId),
                     song.title
                 )
-            } else {
-                playerViewModel.showAndPlaySong(song, songResultsQueue, searchQueueName)
             }
             onItemSelected()
         }
     }
+
 
     val sectionOrder = listOf(
         SearchFilterType.SONGS,

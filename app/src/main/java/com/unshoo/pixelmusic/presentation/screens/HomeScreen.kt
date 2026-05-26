@@ -39,6 +39,9 @@ import androidx.compose.material3.LargeExtendedFloatingActionButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -260,6 +263,7 @@ fun HomeScreen(
     val homeStatsOverview by statsViewModel.homeOverview.collectAsStateWithLifecycle()
     val quickPicks by quickPicksViewModel.quickPicks.collectAsStateWithLifecycle()
     val artistReleases by favoriteArtistReleasesViewModel.releases.collectAsStateWithLifecycle()
+    var isRefreshing by remember { mutableStateOf(false) }
 
     val listState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val density = LocalDensity.current
@@ -334,6 +338,20 @@ fun HomeScreen(
                 )
             }
         ) { innerPadding ->
+            val pullRefreshState = rememberPullToRefreshState()
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    isRefreshing = true
+                    homePlaceholderRefreshGeneration++
+                    scope.launch {
+                        delay(2000)
+                        isRefreshing = false
+                    }
+                },
+                state = pullRefreshState,
+                modifier = Modifier.fillMaxSize()
+            ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -355,7 +373,10 @@ fun HomeScreen(
                         QuickPicksSection(
                             songs = quickPicks,
                             onSongClick = { song ->
-                                playerViewModel.showAndPlaySong(song, listOf(song), "Quick Picks")
+                                playerViewModel.showAndPlaySong(song, quickPicks, "Quick Picks")
+                            },
+                            onSeeAllClick = {
+                                navController.navigateSafely(Screen.QuickPicksAll.route)
                             },
                             currentSongId = currentSong?.id
                         )
@@ -522,6 +543,7 @@ fun HomeScreen(
                     }
                 }
             }
+            } // end PullToRefreshBox
         }
         Box(
             modifier = Modifier

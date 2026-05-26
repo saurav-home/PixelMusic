@@ -2288,7 +2288,14 @@ class PlayerViewModel @Inject constructor(
                 val songs = nextResult.items.map { it.toNativeSong() }
                 if (songs.isNotEmpty()) {
                     com.unshoo.pixelmusic.data.remote.youtube.AutoQueueManager.reset()
-                    
+
+                    // CRITICAL FIX: Save songs to DB BEFORE starting playback.
+                    // This ensures artist/album rows exist when the player/history
+                    // system references them, preventing NOT NULL / FK constraint crashes.
+                    withContext(Dispatchers.IO) {
+                        saveYoutubeSongsToDb(songs)
+                    }
+
                     val startSong = songs.first()
                     playSongs(songs, startSong, title)
                     
@@ -2298,6 +2305,8 @@ class PlayerViewModel @Inject constructor(
                         continuation = nextResult.continuation,
                         videoId = videoId
                     )
+                } else {
+                    Timber.w("playRadio: YouTube.next() returned empty items for endpoint")
                 }
                 _playerUiState.update { it.copy(isLoadingInitialSongs = false) }
             }.onFailure { e ->
@@ -2434,10 +2443,17 @@ class PlayerViewModel @Inject constructor(
             }
             return videoId
         }
-       fun playQuickPicksRadio(quickPicks: List<Song>) {
+    fun playQuickPicksRadio(quickPicks: List<Song>) {
         if (quickPicks.isEmpty()) return
         val first = quickPicks.first()
-        playSongs(listOf(first), first, "Quick Picks Radio")
+        // CRITICAL FIX: If seed is a YouTube song, save it to DB first so that
+        // the player/history system doesn't crash on missing artist_id FK.
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                saveYoutubeSongsToDb(listOf(first))
+            }
+            playSongs(listOf(first), first, "Quick Picks Radio")
+        }
         
         viewModelScope.launch {
             val videoId = resolveQuickPicksVideoId(first)

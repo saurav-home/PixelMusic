@@ -17,8 +17,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,6 +55,7 @@ private data class QuickPicksPillRow(val pills: List<QuickPicksPillCell>, val co
 fun QuickPicksSection(
     songs: List<Song>,
     onSongClick: (Song) -> Unit,
+    onSeeAllClick: (() -> Unit)? = null,
     currentSongId: String? = null,
     modifier: Modifier = Modifier
 ) {
@@ -66,12 +72,38 @@ fun QuickPicksSection(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "Quick Picks",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 20.dp)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Quick Picks",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 6.dp)
+            )
+            if (onSeeAllClick != null) {
+                FilledIconButton(
+                    modifier = Modifier
+                        .height(40.dp)
+                        .width(64.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.secondary
+                    ),
+                    onClick = onSeeAllClick
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                        contentDescription = "See all quick picks",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
