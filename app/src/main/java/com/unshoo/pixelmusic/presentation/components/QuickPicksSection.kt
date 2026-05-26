@@ -60,7 +60,10 @@ fun QuickPicksSection(
     modifier: Modifier = Modifier
 ) {
     if (songs.isEmpty()) return
-    val visible = remember(songs) { songs.take(QuickPicksLimit) }
+    val visible = remember(songs) {
+        val count = (songs.size / 3) * 3
+        songs.take(count.coerceAtMost(QuickPicksLimit))
+    }
     val rows = remember(visible) { buildQuickPickRows(visible) }
     val scrollState = rememberScrollState()
     val actualRowsCount = rows.size

@@ -105,30 +105,7 @@ class LyricsStateHolder @Inject constructor(
      * @param sourcePreference The preferred source for lyrics
      */
     private suspend fun fetchYouTubeLyrics(song: Song): String? {
-        val videoId = song.youtubeId 
-            ?: if (song.id.startsWith("youtube_")) song.id.substringAfter("youtube_")
-               else if (song.contentUriString?.startsWith("youtube://") == true) song.contentUriString.substringAfter("youtube://")
-               else return null
-
-        return try {
-            val watchEndpoint = unshoo.ianshulyadav.pixelmusic.innertube.models.WatchEndpoint(videoId = videoId)
-            val nextResult = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.next(watchEndpoint).getOrNull()
-            val lyricsEndpoint = nextResult?.lyricsEndpoint
-            
-            var rawLyrics: String? = null
-            if (lyricsEndpoint != null) {
-                rawLyrics = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.lyrics(lyricsEndpoint).getOrNull()
-            }
-            
-            if (rawLyrics == null) {
-                rawLyrics = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.transcript(videoId).getOrNull()
-            }
-            
-            rawLyrics
-        } catch (e: Exception) {
-            timber.log.Timber.e(e, "Failed to fetch YouTube lyrics for $videoId")
-            null
-        }
+        return null
     }
 
     fun loadLyricsForSong(song: Song, sourcePreference: LyricsSourcePreference) {

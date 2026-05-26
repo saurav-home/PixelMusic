@@ -18,6 +18,9 @@ import unshoo.ianshulyadav.pixelmusic.innertube.pages.HomePage
 import unshoo.ianshulyadav.pixelmusic.innertube.pages.ChartsPage
 import javax.inject.Inject
 
+import kotlinx.coroutines.async
+import unshoo.ianshulyadav.pixelmusic.innertube.models.PlaylistItem
+
 data class ExploreUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
@@ -31,7 +34,9 @@ data class ExploreUiState(
 )
 
 @HiltViewModel
-class ExploreViewModel @Inject constructor() : ViewModel() {
+class ExploreViewModel @Inject constructor(
+    private val playbackStatsRepository: com.unshoo.pixelmusic.data.stats.PlaybackStatsRepository
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ExploreUiState())
     val uiState: StateFlow<ExploreUiState> = _uiState.asStateFlow()
@@ -48,16 +53,16 @@ class ExploreViewModel @Inject constructor() : ViewModel() {
                 _uiState.update { it.copy(isLoading = true, error = null) }
             }
             try {
-                val data = withContext(Dispatchers.IO) {
-                    val home = YouTube.home().getOrNull()
-                    val explore = YouTube.explore().getOrNull()
-                    val charts = YouTube.getChartsPage().getOrNull()
-                    Triple(home, explore, charts)
-                }
+                // Fetch Explore sections parallelly
+                val homeDeferred = async(Dispatchers.IO) { YouTube.home().getOrNull() }
+                val exploreDeferred = async(Dispatchers.IO) { YouTube.explore().getOrNull() }
+                val chartsDeferred = async(Dispatchers.IO) { YouTube.getChartsPage().getOrNull() }
+                val historyDeferred = async(Dispatchers.IO) { playbackStatsRepository.loadPlaybackHistory(limit = 15) }
 
-                val home = data.first
-                val explore = data.second
-                val charts = data.third
+                val home = homeDeferred.await()
+                val explore = exploreDeferred.await()
+                val charts = chartsDeferred.await()
+                val history = historyDeferred.await()
 
                 if (home == null && explore == null && charts == null) {
                     _uiState.update {
@@ -68,11 +73,53 @@ class ExploreViewModel @Inject constructor() : ViewModel() {
                         )
                     }
                 } else {
+                    val userActivityQuery = if (history.isNotEmpty()) {
+                        val artistCounts = history.mapNotNull { it.artist }.groupingBy { it }.eachCount()
+                        artistCounts.maxByOrNull { it.value }?.key ?: "Bollywood"
+                    } else {
+                        "Bollywood"
+                    }
+
+                    // Load community playlists for user's favorite artist
+                    val communityPlaylistsResult = withContext(Dispatchers.IO) {
+                        YouTube.search(
+                            query = "$userActivityQuery playlist",
+                            filter = YouTube.SearchFilter.FILTER_COMMUNITY_PLAYLIST
+                        ).getOrNull()
+                    }
+
+                    val communityPlaylists = communityPlaylistsResult?.items?.filterIsInstance<PlaylistItem>() ?: emptyList()
+
+                    val rawSections = home?.sections ?: emptyList()
+                    var updatedSections = rawSections.map { section ->
+                        if (section.title.contains("trending", ignoreCase = true) && communityPlaylists.isNotEmpty()) {
+                            HomePage.Section(
+                                title = "Trending community playlists",
+                                label = "Based on your activity for $userActivityQuery",
+                                thumbnail = null,
+                                endpoint = null,
+                                items = communityPlaylists
+                            )
+                        } else {
+                            section
+                        }
+                    }
+
+                    if (communityPlaylists.isNotEmpty() && !updatedSections.any { it.title.contains("trending", ignoreCase = true) }) {
+                        updatedSections = updatedSections + HomePage.Section(
+                            title = "Trending community playlists",
+                            label = "Based on your activity for $userActivityQuery",
+                            thumbnail = null,
+                            endpoint = null,
+                            items = communityPlaylists
+                        )
+                    }
+
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             isRefreshing = false,
-                            homePageSections = home?.sections ?: emptyList(),
+                            homePageSections = updatedSections,
                             homePageContinuation = home?.continuation,
                             newReleaseAlbums = explore?.newReleaseAlbums ?: emptyList(),
                             chartsPage = charts

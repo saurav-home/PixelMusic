@@ -168,6 +168,12 @@ fun ExploreScreen(
                         }
                     }
                 } else {
+                    val nonTrendingSections = remember(uiState.homePageSections) {
+                        uiState.homePageSections.filter { !it.title.contains("trending", ignoreCase = true) }
+                    }
+                    val trendingSections = remember(uiState.homePageSections) {
+                        uiState.homePageSections.filter { it.title.contains("trending", ignoreCase = true) }
+                    }
                     val bottomPadding = if (currentSongId != null) MiniPlayerHeight else 0.dp
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -207,7 +213,109 @@ fun ExploreScreen(
 
                         // 1) "For You" / Homepage content (includes albums, songs, playlists, artists)
                         if (uiState.selectedFilter == "All" || uiState.selectedFilter == "For You") {
-                            uiState.homePageSections.forEach { section ->
+                            nonTrendingSections.forEach { section ->
+                                item(key = "home_section_${section.title}_header") {
+                                    val isQuickPicks = section.title.contains("quick picks", ignoreCase = true)
+                                    val quickPicksSongs = remember(section.items) {
+                                        section.items.filterIsInstance<SongItem>().map { it.toNativeSong() }
+                                    }
+                                    SectionHeader(
+                                        title = section.title,
+                                        onActionClick = if (isQuickPicks && quickPicksSongs.isNotEmpty()) {
+                                            {
+                                                playerViewModel.playSongs(
+                                                    quickPicksSongs,
+                                                    quickPicksSongs.first(),
+                                                    section.title
+                                                )
+                                            }
+                                        } else null,
+                                        actionLabel = if (isQuickPicks && quickPicksSongs.isNotEmpty()) "Play All" else null
+                                    )
+                                }
+                                item(key = "home_section_${section.title}_carousel") {
+                                    YTItemCarousel(
+                                        items = section.items,
+                                        navController = navController,
+                                        playerViewModel = playerViewModel,
+                                        sectionTitle = section.title
+                                    )
+                                }
+                            }
+
+                            // Render Charts Sections in "All" view before Trending community playlists!
+                            if (uiState.selectedFilter == "All" && uiState.chartsPage != null && uiState.chartsPage!!.sections.isNotEmpty()) {
+                                uiState.chartsPage!!.sections.forEach { chartSection ->
+                                    item(key = "chart_${chartSection.title}_header_in_all") {
+                                        SectionHeader(title = chartSection.title)
+                                    }
+
+                                    val songItems = chartSection.items.filterIsInstance<SongItem>()
+                                    if (songItems.isNotEmpty()) {
+                                        val songListNative = songItems.map { it.toNativeSong() }
+                                        items(songItems.size) { index ->
+                                            val songItem = songItems[index]
+                                            val songNative = songListNative[index]
+                                            EnhancedSongListItem(
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                song = songNative,
+                                                isPlaying = isPlaying && currentSongId == songNative.id,
+                                                isCurrentSong = currentSongId == songNative.id,
+                                                onClick = {
+                                                    playerViewModel.showAndPlaySong(
+                                                        songNative,
+                                                        songListNative,
+                                                        chartSection.title
+                                                    )
+                                                },
+                                                onMoreOptionsClick = {
+                                                    playerViewModel.selectSongForInfo(songNative)
+                                                }
+                                            )
+                                        }
+                                    } else {
+                                        item(key = "chart_${chartSection.title}_list_in_all") {
+                                            LazyRow(
+                                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                items(chartSection.items) { item ->
+                                                    when (item) {
+                                                        is AlbumItem -> {
+                                                            AlbumCarouselItem(
+                                                                album = item,
+                                                                onClick = {
+                                                                    navController.navigateSafely(Screen.AlbumDetail.createRoute(item.browseId))
+                                                                }
+                                                            )
+                                                        }
+                                                        is ArtistItem -> {
+                                                            ArtistCardItem(
+                                                                artist = item,
+                                                                onClick = {
+                                                                    navController.navigateSafely(Screen.ArtistDetail.createRoute(item.id))
+                                                                }
+                                                            )
+                                                        }
+                                                        is PlaylistItem -> {
+                                                            PlaylistCardItem(
+                                                                playlist = item,
+                                                                onClick = {
+                                                                    navController.navigateSafely(Screen.PlaylistDetail.createRoute(item.id))
+                                                                }
+                                                            )
+                                                        }
+                                                        else -> {}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Render Trending homepage sections (e.g. Trending community playlists)
+                            trendingSections.forEach { section ->
                                 item(key = "home_section_${section.title}_header") {
                                     SectionHeader(title = section.title)
                                 }
@@ -265,8 +373,8 @@ fun ExploreScreen(
                             }
                         }
 
-                        // 3) Charts Sections
-                        if ((uiState.selectedFilter == "All" || uiState.selectedFilter == "Charts") &&
+                        // 3) Charts Sections (Only rendered in dedicated Charts view)
+                        if (uiState.selectedFilter == "Charts" &&
                             uiState.chartsPage != null && uiState.chartsPage!!.sections.isNotEmpty()
                         ) {
                             uiState.chartsPage!!.sections.forEach { chartSection ->
@@ -447,6 +555,7 @@ fun ExploreTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
             .statusBarsPadding()
             .padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -491,16 +600,40 @@ fun ExploreTopBar(
 }
 
 @Composable
-fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleLarge.copy(
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = GoogleSansRounded
-        ),
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-    )
+fun SectionHeader(
+    title: String,
+    onActionClick: (() -> Unit)? = null,
+    actionLabel: String? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = GoogleSansRounded
+            ),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (onActionClick != null && actionLabel != null) {
+            Text(
+                text = actionLabel,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onActionClick)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+    }
 }
 
 @Composable

@@ -904,49 +904,68 @@ fun SearchResultsList(
                                 val onPlayClick: () -> Unit = {
                                     val playlistId = item.playlist.id
                                     coroutineScope.launch {
-                                        val songs: List<Song> = if (playlistId.startsWith("PL") || playlistId.startsWith("VL") || playlistId.toLongOrNull() == null) {
-                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                val ytPlaylistResult = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.playlist(playlistId)
-                                                if (ytPlaylistResult.isSuccess) {
-                                                    val ytPlaylistPage = ytPlaylistResult.getOrThrow()
-                                                    val allYtSongs = ytPlaylistPage.songs.toMutableList()
-                                                    var continuation = ytPlaylistPage.songsContinuation ?: ytPlaylistPage.continuation
-                                                    var pages = 0
-                                                    while (continuation != null && pages < 10) {
-                                                        val contResult = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.playlistContinuation(continuation)
-                                                        if (contResult.isSuccess) {
-                                                            val contPage = contResult.getOrThrow()
-                                                            allYtSongs.addAll(contPage.songs)
-                                                            continuation = contPage.continuation
-                                                            pages++
-                                                        } else {
-                                                            break
+                                        if (playlistId.startsWith("PL") || playlistId.startsWith("VL") || playlistId.toLongOrNull() == null) {
+                                            val ytPlaylistResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                unshoo.ianshulyadav.pixelmusic.innertube.YouTube.playlist(playlistId)
+                                            }
+                                            if (ytPlaylistResult.isSuccess) {
+                                                val ytPlaylistPage = ytPlaylistResult.getOrThrow()
+                                                val firstPageSongs = ytPlaylistPage.songs.map { it.toNativeSong() }
+                                                
+                                                if (firstPageSongs.isNotEmpty()) {
+                                                    playerViewModel.insertYoutubeSongs(firstPageSongs)
+                                                    playerViewModel.playSongs(
+                                                        firstPageSongs,
+                                                        firstPageSongs.first(),
+                                                        item.playlist.name
+                                                    )
+                                                    if (playerStableState.isShuffleEnabled) playerViewModel.toggleShuffle()
+                                                    onItemSelected()
+
+                                                    // Fetch remaining tracks progressively in the background
+                                                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                                        var continuation = ytPlaylistPage.songsContinuation ?: ytPlaylistPage.continuation
+                                                        var pages = 0
+                                                        while (continuation != null && pages < 10) {
+                                                            val contResult = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.playlistContinuation(continuation)
+                                                            if (contResult.isSuccess) {
+                                                                val contPage = contResult.getOrThrow()
+                                                                val contSongs = contPage.songs.map { it.toNativeSong() }
+                                                                if (contSongs.isNotEmpty()) {
+                                                                    playerViewModel.insertYoutubeSongs(contSongs)
+                                                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                                        contSongs.forEach { playerViewModel.addSongToQueue(it) }
+                                                                    }
+                                                                }
+                                                                continuation = contPage.continuation
+                                                                pages++
+                                                            } else {
+                                                                break
+                                                            }
                                                         }
                                                     }
-                                                    val nativeSongs = allYtSongs.map { it.toNativeSong() }
-                                                    if (nativeSongs.isNotEmpty()) {
-                                                        playerViewModel.insertYoutubeSongs(nativeSongs)
-                                                    }
-                                                    nativeSongs
                                                 } else {
-                                                    emptyList<Song>()
+                                                    playerViewModel.sendToast("Empty playlist")
+                                                    onItemSelected()
                                                 }
+                                            } else {
+                                                playerViewModel.sendToast("Failed to fetch playlist")
+                                                onItemSelected()
                                             }
                                         } else {
-                                            playerViewModel.getSongs(item.playlist.songIds)
+                                            val songs = playerViewModel.getSongs(item.playlist.songIds)
+                                            if (songs.isNotEmpty()) {
+                                                playerViewModel.playSongs(
+                                                    songs,
+                                                    songs.first(),
+                                                    item.playlist.name
+                                                )
+                                                if (playerStableState.isShuffleEnabled) playerViewModel.toggleShuffle()
+                                            } else {
+                                                playerViewModel.sendToast("Empty playlist")
+                                            }
+                                            onItemSelected()
                                         }
-
-                                        if (songs.isNotEmpty()) {
-                                            playerViewModel.playSongs(
-                                                songs,
-                                                songs.first(),
-                                                item.playlist.name
-                                            )
-                                            if (playerStableState.isShuffleEnabled) playerViewModel.toggleShuffle()
-                                        } else {
-                                            playerViewModel.sendToast("Empty playlist")
-                                        }
-                                        onItemSelected()
                                     }
                                 }
                                 val onOpenClick = remember(
