@@ -2545,20 +2545,45 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    suspend fun insertYoutubeSongs(songs: List<Song>) {
+        musicRepository.insertYoutubeSongs(songs)
+    }
+
     fun playAlbum(album: Album) {
         Log.d("ShuffleDebug", "playAlbum called for album: ${album.title}")
         viewModelScope.launch {
             try {
-                val songsList: List<Song> = withContext(Dispatchers.IO) {
-                    musicRepository.getSongsForAlbum(album.id).first()
+                val mappedBrowseId = SearchStateHolder.albumIdMap[album.id]
+                val songsList: List<Song> = if (mappedBrowseId != null) {
+                    withContext(Dispatchers.IO) {
+                        val result = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.album(mappedBrowseId)
+                        if (result.isSuccess) {
+                            val albumPage = result.getOrThrow()
+                            val mappedSongs = albumPage.songs.map { it.toNativeSong() }
+                            if (mappedSongs.isNotEmpty()) {
+                                musicRepository.insertYoutubeSongs(mappedSongs)
+                            }
+                            mappedSongs
+                        } else {
+                            emptyList()
+                        }
+                    }
+                } else {
+                    withContext(Dispatchers.IO) {
+                        musicRepository.getSongsForAlbum(album.id).first()
+                    }
                 }
 
                 if (songsList.isNotEmpty()) {
-                    val sortedSongs = songsList.sortedWith(
-                        compareBy<Song> { it.discNumber ?: 1 }
-                            .thenBy { if (it.trackNumber > 0) it.trackNumber else Int.MAX_VALUE }
-                            .thenBy { it.title.lowercase() }
-                    )
+                    val sortedSongs = if (mappedBrowseId != null) {
+                        songsList
+                    } else {
+                        songsList.sortedWith(
+                            compareBy<Song> { it.discNumber ?: 1 }
+                                .thenBy { if (it.trackNumber > 0) it.trackNumber else Int.MAX_VALUE }
+                                .thenBy { it.title.lowercase() }
+                        )
+                    }
 
                     playSongs(sortedSongs, sortedSongs.first(), album.title, null)
                     _isSheetVisible.value = true // Mostrar reproductor

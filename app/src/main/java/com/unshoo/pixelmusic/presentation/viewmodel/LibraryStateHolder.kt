@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -144,12 +145,34 @@ class LibraryStateHolder @Inject constructor(
 
     val genres: Flow<ImmutableList<Genre>> = flowOf(persistentListOf())
 
+    private var foldersJob: kotlinx.coroutines.Job? = null
+    private var scope: CoroutineScope? = null
+
     fun initialize(scope: CoroutineScope) {
-        // Paging flows are cold — no explicit initialization needed.
-        // Retained for API compat.
+        this.scope = scope
+        foldersJob?.cancel()
+        foldersJob = scope.launch {
+            combine(
+                effectiveStorageFilter,
+                _currentFolderSortOption
+            ) { filter, sortOption ->
+                filter to sortOption
+            }.flatMapLatest { (filter, sortOption) ->
+                musicRepository.getMusicFolders(StorageFilter.OFFLINE)
+                    .map { folders ->
+                        sortFoldersList(folders, sortOption).toImmutableList()
+                    }
+            }.flowOn(Dispatchers.IO)
+            .collect { sortedFolders ->
+                _musicFolders.value = sortedFolders
+            }
+        }
     }
 
-    fun onCleared() {}
+    fun onCleared() {
+        foldersJob?.cancel()
+        scope = null
+    }
 
     // --- No-op data loaders (paging flows auto-refresh from DB) ---
     fun startObservingLibraryData() {}
@@ -176,6 +199,40 @@ class LibraryStateHolder @Inject constructor(
 
     fun sortFolders(sortOption: SortOption, persist: Boolean = true) {
         _currentFolderSortOption.value = sortOption
+    }
+
+    private fun sortFoldersList(folders: Iterable<MusicFolder>, sortOption: SortOption): List<MusicFolder> {
+        return when (sortOption) {
+            SortOption.FolderNameAZ -> folders.sortedWith(
+                compareBy<MusicFolder> { it.name.lowercase() }
+                    .thenBy { it.path }
+            )
+            SortOption.FolderNameZA -> folders.sortedWith(
+                compareByDescending<MusicFolder> { it.name.lowercase() }
+                    .thenBy { it.path }
+            )
+            SortOption.FolderSongCountAsc -> folders.sortedWith(
+                compareBy<MusicFolder> { it.totalSongCount }
+                    .thenBy { it.name.lowercase() }
+                    .thenBy { it.path }
+            )
+            SortOption.FolderSongCountDesc -> folders.sortedWith(
+                compareByDescending<MusicFolder> { it.totalSongCount }
+                    .thenBy { it.name.lowercase() }
+                    .thenBy { it.path }
+            )
+            SortOption.FolderSubdirCountAsc -> folders.sortedWith(
+                compareBy<MusicFolder> { it.totalSubFolderCount }
+                    .thenBy { it.name.lowercase() }
+                    .thenBy { it.path }
+            )
+            SortOption.FolderSubdirCountDesc -> folders.sortedWith(
+                compareByDescending<MusicFolder> { it.totalSubFolderCount }
+                    .thenBy { it.name.lowercase() }
+                    .thenBy { it.path }
+            )
+            else -> folders.toList()
+        }
     }
 
     fun sortFavoriteSongs(sortOption: SortOption, persist: Boolean = true) {

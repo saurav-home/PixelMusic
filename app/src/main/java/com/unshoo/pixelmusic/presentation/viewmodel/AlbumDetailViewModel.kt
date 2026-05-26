@@ -44,7 +44,10 @@ class AlbumDetailViewModel @Inject constructor(
         val albumIdString: String? = savedStateHandle.get("albumId")
         if (albumIdString != null) {
             val albumId = albumIdString.toLongOrNull()
-            if (albumId != null) {
+            val mappedBrowseId = albumId?.let { SearchStateHolder.albumIdMap[it] }
+            if (mappedBrowseId != null) {
+                loadOnlineAlbumData(mappedBrowseId)
+            } else if (albumId != null) {
                 loadAlbumData(albumId)
             } else {
                 loadOnlineAlbumData(albumIdString)

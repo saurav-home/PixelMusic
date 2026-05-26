@@ -29,6 +29,7 @@ import unshoo.ianshulyadav.pixelmusic.innertube.models.AlbumItem
 import unshoo.ianshulyadav.pixelmusic.innertube.models.ArtistItem
 import unshoo.ianshulyadav.pixelmusic.innertube.models.PlaylistItem
 import unshoo.ianshulyadav.pixelmusic.innertube.models.SongItem
+import unshoo.ianshulyadav.pixelmusic.innertube.models.filterVideo
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,6 +46,7 @@ class SearchStateHolder @Inject constructor(
     companion object {
         const val SEARCH_DEBOUNCE_MS = 150L
         const val SEARCH_CACHE_SIZE = 30
+        val albumIdMap = java.util.concurrent.ConcurrentHashMap<Long, String>()
     }
 
     private val searchResultCache = LruCache<String, ImmutableList<SearchResultItem>>(SEARCH_CACHE_SIZE)
@@ -137,16 +139,26 @@ class SearchStateHolder @Inject constructor(
                 result?.summaries?.forEach { summary ->
                     summary.items.forEach { item ->
                         when (item) {
-                            is SongItem -> items.add(SearchResultItem.SongItem(item.toNativeSong()))
+                            is SongItem -> {
+                                val musicVideoType = item.endpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType
+                                val isMusicVideo = musicVideoType == "MUSIC_VIDEO_TYPE_OMV" || musicVideoType == "MUSIC_VIDEO_TYPE_UGC"
+                                if (!isMusicVideo) {
+                                    items.add(SearchResultItem.SongItem(item.toNativeSong()))
+                                }
+                            }
                             is ArtistItem -> items.add(SearchResultItem.ArtistItem(
                                 Artist(id = ytArtistId(item.title), name = item.title, songCount = 0, imageUrl = item.thumbnail, channelId = item.id)
                             ))
-                            is AlbumItem -> items.add(SearchResultItem.AlbumItem(
-                                Album(id = ytAlbumId(item.title), title = item.title,
-                                    artist = item.artists?.joinToString { it.name }.orEmpty(),
-                                    year = item.year ?: 0, dateAdded = System.currentTimeMillis(),
-                                    albumArtUriString = item.thumbnail, songCount = 0)
-                            ))
+                            is AlbumItem -> {
+                                val longId = ytAlbumId(item.title)
+                                albumIdMap[longId] = item.browseId
+                                items.add(SearchResultItem.AlbumItem(
+                                    Album(id = longId, title = item.title,
+                                        artist = item.artists?.joinToString { it.name }.orEmpty(),
+                                        year = item.year ?: 0, dateAdded = System.currentTimeMillis(),
+                                        albumArtUriString = item.thumbnail, songCount = 0)
+                                ))
+                            }
                             is PlaylistItem -> items.add(SearchResultItem.PlaylistItem(
                                 Playlist(id = item.id, name = item.title, songIds = emptyList(), coverImageUri = item.thumbnail, source = "YOUTUBE")
                             ))
@@ -157,7 +169,7 @@ class SearchStateHolder @Inject constructor(
             }
             SearchFilterType.SONGS -> {
                 val result = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG).getOrNull()
-                result?.items?.filterIsInstance<SongItem>()?.forEach { items.add(SearchResultItem.SongItem(it.toNativeSong())) }
+                result?.items?.filterIsInstance<SongItem>()?.filterVideo(true)?.forEach { items.add(SearchResultItem.SongItem(it.toNativeSong())) }
             }
             SearchFilterType.ARTISTS -> {
                 val result = YouTube.search(query, YouTube.SearchFilter.FILTER_ARTIST).getOrNull()
@@ -168,7 +180,9 @@ class SearchStateHolder @Inject constructor(
             SearchFilterType.ALBUMS -> {
                 val result = YouTube.search(query, YouTube.SearchFilter.FILTER_ALBUM).getOrNull()
                 result?.items?.filterIsInstance<AlbumItem>()?.forEach { a ->
-                    items.add(SearchResultItem.AlbumItem(Album(id = ytAlbumId(a.title), title = a.title,
+                    val longId = ytAlbumId(a.title)
+                    albumIdMap[longId] = a.browseId
+                    items.add(SearchResultItem.AlbumItem(Album(id = longId, title = a.title,
                         artist = a.artists?.joinToString { it.name }.orEmpty(), year = a.year ?: 0,
                         dateAdded = System.currentTimeMillis(), albumArtUriString = a.thumbnail, songCount = 0)))
                 }
@@ -178,6 +192,10 @@ class SearchStateHolder @Inject constructor(
                 result?.items?.filterIsInstance<PlaylistItem>()?.forEach { p ->
                     items.add(SearchResultItem.PlaylistItem(Playlist(id = p.id, name = p.title, songIds = emptyList(), coverImageUri = p.thumbnail, source = "YOUTUBE")))
                 }
+            }
+            SearchFilterType.VIDEOS -> {
+                val result = YouTube.search(query, YouTube.SearchFilter.FILTER_VIDEO).getOrNull()
+                result?.items?.filterIsInstance<SongItem>()?.forEach { items.add(SearchResultItem.SongItem(it.toNativeSong())) }
             }
         }
         return items

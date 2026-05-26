@@ -707,6 +707,7 @@ class MusicRepositoryImpl @Inject constructor(
                 SearchFilterType.ALBUMS -> searchAlbums(query, minTracks).map { albums -> albums.map { SearchResultItem.AlbumItem(it) } }
                 SearchFilterType.ARTISTS -> searchArtists(query).map { artists -> artists.map { SearchResultItem.ArtistItem(it) } }
                 SearchFilterType.PLAYLISTS -> playlistsFlow.map { playlists -> playlists.map { SearchResultItem.PlaylistItem(it) } }
+                SearchFilterType.VIDEOS -> flowOf(emptyList())
             }
         }.flowOn(Dispatchers.Default)
     }
@@ -1101,7 +1102,15 @@ class MusicRepositoryImpl @Inject constructor(
             favoritesDao.removeFavorite(id)
         }
 
-        // YouTube remote like sync removed
+        if (youtubeId != null) {
+            repositoryScope.launch(Dispatchers.IO) {
+                try {
+                    unshoo.ianshulyadav.pixelmusic.innertube.YouTube.likeVideo(youtubeId, isFavorite)
+                } catch (e: Exception) {
+                    Timber.tag("MusicRepository").e(e, "Failed to sync remote favorite to YouTube for $youtubeId")
+                }
+            }
+        }
     }
 
     override suspend fun setFavoriteStatusWithMetadata(song: Song, isFavorite: Boolean) = withContext(Dispatchers.IO) {
@@ -1141,7 +1150,15 @@ class MusicRepositoryImpl @Inject constructor(
             favoritesDao.removeFavorite(id)
         }
 
-        // YouTube remote like sync removed
+        if (youtubeId != null) {
+            repositoryScope.launch(Dispatchers.IO) {
+                try {
+                    unshoo.ianshulyadav.pixelmusic.innertube.YouTube.likeVideo(youtubeId, isFavorite)
+                } catch (e: Exception) {
+                    Timber.tag("MusicRepository").e(e, "Failed to sync remote favorite to YouTube for $youtubeId")
+                }
+            }
+        }
     }
 
     override suspend fun getFavoriteSongIdsOnce(): Set<String> = withContext(Dispatchers.IO) {

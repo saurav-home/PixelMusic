@@ -76,6 +76,7 @@ import com.unshoo.pixelmusic.data.model.SearchFilterType
 import com.unshoo.pixelmusic.data.model.SearchHistoryItem
 import com.unshoo.pixelmusic.data.model.SearchResultItem
 import com.unshoo.pixelmusic.data.model.Song
+import com.unshoo.pixelmusic.data.remote.youtube.toNativeSong
 import com.unshoo.pixelmusic.presentation.components.SmartImage
 import com.unshoo.pixelmusic.presentation.components.SmartImageListTargetSize
 import com.unshoo.pixelmusic.presentation.components.SongInfoBottomSheet
@@ -404,6 +405,7 @@ fun SearchScreen(
                         ) {
                             SearchFilterChip(SearchFilterType.ALL, currentFilter, playerViewModel)
                             SearchFilterChip(SearchFilterType.SONGS, currentFilter, playerViewModel)
+                            SearchFilterChip(SearchFilterType.VIDEOS, currentFilter, playerViewModel)
                             SearchFilterChip(SearchFilterType.ALBUMS, currentFilter, playerViewModel)
                             SearchFilterChip(SearchFilterType.ARTISTS, currentFilter, playerViewModel)
                             SearchFilterChip(SearchFilterType.PLAYLISTS, currentFilter, playerViewModel)
@@ -423,6 +425,7 @@ fun SearchScreen(
                                     results = searchResults,
                                     searchQuery = searchQuery,
                                     playerViewModel = playerViewModel,
+                                    currentFilter = currentFilter,
                                     onItemSelected = {
                                         if (searchQuery.isNotBlank()) {
                                             playerViewModel.onSearchQuerySubmitted(searchQuery)
@@ -687,6 +690,7 @@ fun SearchResultsList(
     results: List<SearchResultItem>,
     searchQuery: String,
     playerViewModel: PlayerViewModel,
+    currentFilter: SearchFilterType,
     onItemSelected: () -> Unit,
     currentPlayingSongId: String?,
     isPlaying: Boolean,
@@ -708,19 +712,20 @@ fun SearchResultsList(
         return
     }
 
-    val groupedResults = remember(results) {
+    val groupedResults = remember(results, currentFilter) {
         results.groupBy { item ->
             when (item) {
-                is SearchResultItem.SongItem -> SearchFilterType.SONGS
+                is SearchResultItem.SongItem -> if (currentFilter == SearchFilterType.VIDEOS) SearchFilterType.VIDEOS else SearchFilterType.SONGS
                 is SearchResultItem.AlbumItem -> SearchFilterType.ALBUMS
                 is SearchResultItem.ArtistItem -> SearchFilterType.ARTISTS
                 is SearchResultItem.PlaylistItem -> SearchFilterType.PLAYLISTS
             }
         }
     }
-    val songResultsQueue = remember(groupedResults) {
+    val songResultsQueue = remember(groupedResults, currentFilter) {
         buildList {
-            groupedResults[SearchFilterType.SONGS]
+            val key = if (currentFilter == SearchFilterType.VIDEOS) SearchFilterType.VIDEOS else SearchFilterType.SONGS
+            groupedResults[key]
                 ?.forEach { item ->
                     val song = (item as? SearchResultItem.SongItem)?.song ?: return@forEach
                     add(song)
@@ -754,12 +759,18 @@ fun SearchResultsList(
     }
 
 
-    val sectionOrder = listOf(
-        SearchFilterType.SONGS,
-        SearchFilterType.ALBUMS,
-        SearchFilterType.ARTISTS,
-        SearchFilterType.PLAYLISTS
-    )
+    val sectionOrder = remember(currentFilter) {
+        if (currentFilter == SearchFilterType.VIDEOS) {
+            listOf(SearchFilterType.VIDEOS)
+        } else {
+            listOf(
+                SearchFilterType.SONGS,
+                SearchFilterType.ALBUMS,
+                SearchFilterType.ARTISTS,
+                SearchFilterType.PLAYLISTS
+            )
+        }
+    }
 
     val imePadding = WindowInsets.ime.getBottom(localDensity).dp
     val systemBarPaddingBottom = WindowInsets.systemBars.asPaddingValues().calculateBottomPadding() + 94.dp
@@ -786,6 +797,7 @@ fun SearchResultsList(
                     SearchResultSectionHeader(
                         title = when (filterType) {
                             SearchFilterType.SONGS -> "Songs"
+                            SearchFilterType.VIDEOS -> "Videos"
                             SearchFilterType.ALBUMS -> "Albums"
                             SearchFilterType.ARTISTS -> "Artists"
                             SearchFilterType.PLAYLISTS -> "Playlists"
@@ -890,8 +902,40 @@ fun SearchResultsList(
                                 }.collectAsStateWithLifecycle(initialValue = emptyList())
                                 val coroutineScope = rememberCoroutineScope()
                                 val onPlayClick: () -> Unit = {
+                                    val playlistId = item.playlist.id
                                     coroutineScope.launch {
-                                        val songs = playerViewModel.getSongs(item.playlist.songIds)
+                                        val songs: List<Song> = if (playlistId.startsWith("PL") || playlistId.startsWith("VL") || playlistId.toLongOrNull() == null) {
+                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                val ytPlaylistResult = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.playlist(playlistId)
+                                                if (ytPlaylistResult.isSuccess) {
+                                                    val ytPlaylistPage = ytPlaylistResult.getOrThrow()
+                                                    val allYtSongs = ytPlaylistPage.songs.toMutableList()
+                                                    var continuation = ytPlaylistPage.songsContinuation ?: ytPlaylistPage.continuation
+                                                    var pages = 0
+                                                    while (continuation != null && pages < 10) {
+                                                        val contResult = unshoo.ianshulyadav.pixelmusic.innertube.YouTube.playlistContinuation(continuation)
+                                                        if (contResult.isSuccess) {
+                                                            val contPage = contResult.getOrThrow()
+                                                            allYtSongs.addAll(contPage.songs)
+                                                            continuation = contPage.continuation
+                                                            pages++
+                                                        } else {
+                                                            break
+                                                        }
+                                                    }
+                                                    val nativeSongs = allYtSongs.map { it.toNativeSong() }
+                                                    if (nativeSongs.isNotEmpty()) {
+                                                        playerViewModel.insertYoutubeSongs(nativeSongs)
+                                                    }
+                                                    nativeSongs
+                                                } else {
+                                                    emptyList<Song>()
+                                                }
+                                            }
+                                        } else {
+                                            playerViewModel.getSongs(item.playlist.songIds)
+                                        }
+
                                         if (songs.isNotEmpty()) {
                                             playerViewModel.playSongs(
                                                 songs,
