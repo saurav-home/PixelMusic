@@ -31,8 +31,8 @@ jobs:
 
       - name: Create local.properties
         run: |
-          echo "TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}" > local.properties
-          echo "TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}" >> local.properties
+          echo "TELEGRAM_API_ID=1234567" > local.properties
+          echo "TELEGRAM_API_HASH=dummy_hash_value">> local.properties
 
       - name: Build Phone debug APK
         run: gradle :app:assembleDebug -Ppixelmusic.enableAbiSplits=true
