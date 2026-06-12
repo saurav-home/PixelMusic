@@ -377,7 +377,7 @@ private fun SocialLinksRow() {
             modifier = Modifier
                 .weight(1f)
                 .clickable {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/PixelMusicApp"))
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/Saurav124x"))
                     try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { }
                 },
             shape = AbsoluteSmoothCornerShape(16.dp, 60),
@@ -413,7 +413,7 @@ private fun SocialLinksRow() {
                         maxLines = 1,
                     )
                     Text(
-                        text = "t.me/PixelMusicApp",
+                        text = "t.me/Saurav124x",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
                         maxLines = 1,
@@ -428,7 +428,7 @@ private fun SocialLinksRow() {
             modifier = Modifier
                 .weight(1f)
                 .clickable {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/ianshulyadav/PixelMusic"))
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("sauravbr.github.io"))
                     try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { }
                 },
             shape = AbsoluteSmoothCornerShape(16.dp, 60),
@@ -464,7 +464,7 @@ private fun SocialLinksRow() {
                         maxLines = 1,
                     )
                     Text(
-                        text = "ianshulyadav/PixelMusic",
+                        text = "Saurav/Pixel Music",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         maxLines = 1,
@@ -562,7 +562,7 @@ private fun CreditsCard(
                     modifier = Modifier
                         .weight(1f)
                         .clickable {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/theovilardo"))
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("sauravbr.github.io"))
                             try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { }
                         },
                     shape = AbsoluteSmoothCornerShape(12.dp, 60),
@@ -596,7 +596,7 @@ private fun CreditsCard(
                     modifier = Modifier
                         .weight(1f)
                         .clickable {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/theovilardo/PixelPlayer"))
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("sauravbr.github.io"))
                             try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { }
                         },
                     shape = AbsoluteSmoothCornerShape(12.dp, 60),
